@@ -48,6 +48,9 @@ adb shell settings put secure immersive_mode_confirmations confirmed
 sleep 2
 adb shell wm size | tee -a $OUT/steps.txt
 adb shell wm density | tee -a $OUT/steps.txt
+SH=$(adb shell wm size | tr -d '\r' | tail -1 | sed 's/.*x//')
+DENS=$(adb shell wm density | tr -d '\r' | tail -1 | grep -o '[0-9]*$')
+log "screen height $SH density $DENS"
 
 log "install test game"
 adb install -r -g $TGA 2>&1 | tail -1 | tee -a $OUT/steps.txt
@@ -92,7 +95,9 @@ prepare_app() {
 
 # ---------- 比較用：前のバージョン ----------
 # 前のバージョンは adb から操作できないので、パネルの「🔍 探す」を座標で押す
-OLDBTN="131 547"
+# （パネル左上 12dp,120dp → ボタンの中心は 約 47.75dp, 199dp）
+OLDBTN="$((DENS * 4775 / 16000)) $((DENS * 199 / 160))"
+log "old button at $OLDBTN (density $DENS)"
 run_old() {
   local name=$1 speed=$2 alive=$3 dur=$4
   log "old scan $name speed=$speed alive=$alive"
@@ -124,7 +129,7 @@ ui_shots() {
   sleep 3
   for i in 1 2 3 4 5 6; do
     shot "ui_${tag}_$i"
-    adb shell input swipe 540 1900 540 700 400
+    adb shell input swipe 540 $((SH * 70 / 100)) 540 $((SH * 30 / 100)) 500
     sleep 1
   done
   adb shell input keyevent 4
