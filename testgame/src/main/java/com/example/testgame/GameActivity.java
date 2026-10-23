@@ -251,7 +251,8 @@ public class GameActivity extends Activity {
                 float tx = e.getX(idx), ty = e.getY(idx);
                 lastTx = tx;
                 lastTy = ty;
-                long t = e.getEventTime();
+                // 実際のゲームと同じく、タッチを受け取って処理した時刻の位置で当たり判定する
+                long t = SystemClock.uptimeMillis();
                 if (mode.equals("scan")) {
                     Monster best = null;
                     float bd = Float.MAX_VALUE;

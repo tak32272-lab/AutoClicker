@@ -75,10 +75,13 @@ public class ClickerService extends AccessibilityService {
     private static final long SHOT_INTERVAL = 340;
     /** 続けてタップするときの、指を離してから次に触るまでの間（ms） */
     private static final int TAP_GAP = 10;
-    /** タップがゲームに届くまで＋画面に出るまでの遅れの見込み（ms）。動く敵の予測に使う */
-    private static final float EXTRA_LATENCY = 30f;
-    /** 記録中、膜をすり抜けにしてからタップを流すまでの待ち（ms） */
-    private static final long PASS_DELAY = 34;
+    /** タップがゲームに届くまでの時間（測れなかったときの値, ms） */
+    private static final long DEFAULT_INJ_LAT = 20;
+    /** 記録中、膜をすり抜けにしてからタップを流すまでの待ち（ms）。足りなければ自動で延ばす */
+    private static volatile long passDelay = 34;
+    /** 測った「タップが届くまで」「画面が届くまで」の時間（ms）。-1＝まだ測っていない */
+    private static volatile long sInjLat = -1, sCapLat = -1;
+    private static volatile Object sCapFor;
 
     private WindowManager wm;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -87,6 +90,8 @@ public class ClickerService extends AccessibilityService {
     private final ExecutorService shotExec = Executors.newSingleThreadExecutor();
 
     private LinearLayout panel;
+    private View dragArea;
+    private volatile long calibAt = -1, calibGot = -1;
     private WindowManager.LayoutParams panelLp;
     private TextView mainBtn, titleTv, subTv, scanBtn;
     private volatile int[] panelRect = {0, 0, 0, 0};
@@ -267,6 +272,7 @@ public class ClickerService extends AccessibilityService {
         row1.addView(texts, new LinearLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // 文字の部分をドラッグするとパネルが動く
+        dragArea = texts;
         texts.setOnTouchListener(new View.OnTouchListener() {
             float sx, sy;
             int ox, oy;
@@ -275,6 +281,10 @@ public class ClickerService extends AccessibilityService {
             public boolean onTouch(View v, MotionEvent e) {
                 switch (e.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        if (calibAt > 0) {               // 測定用のタップが届いた
+                            calibGot = Frame.nowMs() - calibAt;
+                            calibAt = -1;
+                        }
                         sx = e.getRawX();
                         sy = e.getRawY();
                         ox = panelLp.x;
@@ -581,10 +591,10 @@ public class ClickerService extends AccessibilityService {
         passAction = a;
         recLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         try { wm.updateViewLayout(recLayer, recLp); } catch (Exception ignored) { }
-        ui.postDelayed(() -> dispatchPass(a, false), PASS_DELAY);
+        ui.postDelayed(() -> dispatchPass(a, 0), passDelay);
     }
 
-    private void dispatchPass(final Action a, final boolean retry) {
+    private void dispatchPass(final Action a, final int retry) {
         if (recLayer == null || state != REC) {
             endPass();
             return;
@@ -595,14 +605,17 @@ public class ClickerService extends AccessibilityService {
         GestureDescription g = new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(pathOf(a), 0, d)).build();
         passAt = Frame.nowMs();
-        Log.i(TAG, "pass dispatch at=" + SystemClock.uptimeMillis() + (retry ? " retry" : ""));
+        passSelfHit = false;
+        Log.i(TAG, "pass dispatch at=" + SystemClock.uptimeMillis() + (retry > 0 ? " retry" + retry : ""));
         boolean ok = send(g, d, () -> ui.post(() -> {
-            if (passSelfHit && !retry) {
-                Log.i(TAG, "pass self-hit, retry");
-                passSelfHit = false;
-                ui.postDelayed(() -> dispatchPass(a, true), 40);
+            if (passSelfHit && retry < 4) {
+                // 膜がまだすり抜けになっていなかった → 少し待って流し直す。次からは最初の待ちを長めにする
+                passDelay = Math.min(200, passDelay + 15);
+                Log.i(TAG, "pass self-hit, retry (delay now " + passDelay + ")");
+                ui.postDelayed(() -> dispatchPass(a, retry + 1), 30L + 20L * retry);
                 return;
             }
+            if (retry == 0 && !passSelfHit) passDelay = Math.max(20, passDelay - 2);
             endPass();
         }));
         if (!ok) endPass();
@@ -836,6 +849,7 @@ public class ClickerService extends AccessibilityService {
             fr.sy = H / (float) vh;
             fr.f = f;
             fr.tsMs = t0;
+            fr.arrMs = Frame.nowMs();
             fails = 0;
             ex.publish(fr);
         }
@@ -1191,8 +1205,12 @@ public class ClickerService extends AccessibilityService {
         List<Tracker.Det> dets = new ArrayList<>();
         long lastSeq = -1, lastUi = 0, lastLog = 0, lastFreshAt = 0;
         int taps = 0, empty = 0, frames = 0;
-        float fps = 0, procMs = 0, reactMs = 0;
+        float fps = 0, procMs = 0, reactMs = 0, arrOff = -1;
         String err = null;
+        // タップが届くまでの時間と、画面が届くまでの時間を測る（動く敵の予測に使う。最初の1回だけ）
+        long injLat = calibrateInjection();
+        long capLat = src.fast() ? calibrateCapture(src) : -1;
+        Log.i(TAG, "calibration injLat=" + injLat + " capLat=" + capLat);
         try {
             while (!abort) {
                 if (!src.alive()) {
@@ -1244,7 +1262,17 @@ public class ClickerService extends AccessibilityService {
                             }
                         }
                     }
-                    tracker.update(dets, fr.tsMs);
+                    // ゲームがこの画面を描いた時刻の見積もり
+                    long game;
+                    if (src.fast()) {
+                        float off = fr.arrMs - fr.tsMs;
+                        if (fresh) arrOff = arrOff < 0 ? off : arrOff * 0.9f + off * 0.1f;
+                        long cap = capLat > 0 ? capLat : (long) (arrOff + 16);
+                        game = fr.tsMs - Math.max(0, cap - (long) arrOff);
+                    } else {
+                        game = fr.tsMs - 8;
+                    }
+                    tracker.update(dets, game);
                 } finally {
                     src.release(fr);
                 }
@@ -1271,7 +1299,7 @@ public class ClickerService extends AccessibilityService {
                         for (Tracker.Track k : cand) {
                             if (used.size() >= limit) break;
                             long start = (long) used.size() * (tapMs + TAP_GAP);
-                            float horizon = (now - k.last) + start + EXTRA_LATENCY;
+                            float horizon = (now - k.last) + start + injLat;
                             float[] p = Tracker.predict(k, horizon, predict);
                             float px = Math.max(1, Math.min(sw - 2, p[0])), py = Math.max(1, Math.min(sh - 2, p[1]));
                             if (px >= pr[0] && px <= pr[2] && py >= pr[1] && py <= pr[3]) continue;
@@ -1287,8 +1315,9 @@ public class ClickerService extends AccessibilityService {
                             float r = now - used.get(0).last;
                             reactMs = reactMs == 0 ? r : reactMs * 0.8f + r * 0.2f;
                             Tracker.Track k0 = used.get(0);
-                            Log.i(TAG, String.format(Locale.US, "tap n=%d at=%d frameAge=%.0f id=%d obs=%d v=%.2f,%.2f",
-                                    used.size(), SystemClock.uptimeMillis(), r, k0.id, k0.obs, k0.vx, k0.vy));
+                            Log.i(TAG, String.format(Locale.US, "tap n=%d at=%d frameAge=%.0f id=%d obs=%d v=%.2f,%.2f horizon=%.0f",
+                                    used.size(), SystemClock.uptimeMillis(), r, k0.id, k0.obs, k0.vx, k0.vy,
+                                    (now - k0.last) + (float) injLat));
                         }
                     }
                 }
@@ -1323,6 +1352,130 @@ public class ClickerService extends AccessibilityService {
             render();
             setText(e != null ? e : "探索を止めました", "タップ " + tc + "回");
         });
+    }
+
+    /** 画面のスレッドで値を作って受け取る */
+    private <T> T onUi(final java.util.concurrent.Callable<T> c) {
+        final Object[] out = new Object[1];
+        final CountDownLatch latch = new CountDownLatch(1);
+        ui.post(() -> {
+            try { out[0] = c.call(); } catch (Exception ignored) { }
+            latch.countDown();
+        });
+        try { latch.await(1, TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
+        @SuppressWarnings("unchecked") T t = (T) out[0];
+        return t;
+    }
+
+    private static long median(List<Long> a) {
+        List<Long> b = new ArrayList<>(a);
+        java.util.Collections.sort(b);
+        return b.get(b.size() / 2);
+    }
+
+    /**
+     * タップを送ってからアプリに届くまでの時間を測る。
+     * パネルの文字の部分（触っても何も起きない所）を3回だけタップして測る。
+     */
+    private long calibrateInjection() {
+        if (sInjLat > 0) return sInjLat;
+        List<Long> samples = new ArrayList<>();
+        for (int i = 0; i < 3 && !abort; i++) {
+            float[] pt = onUi(() -> {
+                if (dragArea == null || panel == null || !dragArea.isShown()) return null;
+                int[] loc = new int[2];
+                dragArea.getLocationOnScreen(loc);
+                return new float[]{loc[0] + dragArea.getWidth() / 2f, loc[1] + dragArea.getHeight() / 2f};
+            });
+            if (pt == null) break;
+            long until = Frame.nowMs() + 500;
+            while (!gestureFree() && Frame.nowMs() < until) SystemClock.sleep(2);
+            Path p = new Path();
+            p.moveTo(pt[0], pt[1]);
+            calibGot = -1;
+            calibAt = Frame.nowMs();
+            if (!send(new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(p, 0, 10)).build(), 10, null)) {
+                calibAt = -1;
+                break;
+            }
+            long end = Frame.nowMs() + 400;
+            while (calibGot < 0 && Frame.nowMs() < end) SystemClock.sleep(1);
+            if (calibGot >= 0) samples.add(calibGot);
+            calibAt = -1;
+            SystemClock.sleep(40);
+        }
+        if (samples.isEmpty()) return DEFAULT_INJ_LAT;
+        sInjLat = Math.max(2, Math.min(150, median(samples)));
+        return sInjLat;
+    }
+
+    /**
+     * 画面に描いてから、画面共有でこちらに届くまでの時間を測る。
+     * ⏯️ボタンの色を白・黒に数回切り替え、それが届いた画面に写るまでの時間を見る（最初の1回だけ、一瞬ちらつく）。
+     */
+    private long calibrateCapture(Frame.Source src) {
+        CaptureService cs = CaptureService.instance;
+        if (cs == null) return -1;
+        if (sCapLat > 0 && sCapFor == cs) return sCapLat;
+        final float[] spot = onUi(() -> {
+            if (mainBtn == null || panel == null || !mainBtn.isShown()) return null;
+            int[] loc = new int[2];
+            mainBtn.getLocationOnScreen(loc);
+            panel.setAlpha(1f);
+            setBtnColor(Color.BLACK);
+            return new float[]{loc[0] + mainBtn.getWidth() * 0.15f, loc[1] + mainBtn.getHeight() * 0.5f};
+        });
+        if (spot == null) return -1;
+        List<Long> samples = new ArrayList<>();
+        long seq = -1;
+        try {
+            SystemClock.sleep(150);
+            for (int i = 0; i < 4 && !abort; i++) {
+                final int want = (i % 2 == 0) ? Color.WHITE : Color.BLACK;
+                long t0 = Frame.nowMs();
+                ui.postAtFrontOfQueue(() -> setBtnColor(want));
+                long end = t0 + 1000;
+                boolean seen = false;
+                while (!seen && Frame.nowMs() < end && !abort) {
+                    Frame fr = src.acquire(seq, 100);
+                    if (fr == null) continue;
+                    try {
+                        if (fr.seq == seq) continue;
+                        seq = fr.seq;
+                        int x = (int) (spot[0] / fr.sx), y = (int) (spot[1] / fr.sy);
+                        if (x < 0 || y < 0 || x >= fr.w || y >= fr.h) return -1;
+                        int c = fr.argb[y * fr.w + x];
+                        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+                        boolean ok = want == Color.WHITE ? (r > 200 && g > 200 && b > 200) : (r < 55 && g < 55 && b < 55);
+                        if (ok && fr.arrMs >= t0) {
+                            samples.add(fr.arrMs - t0);
+                            seen = true;
+                        }
+                    } finally {
+                        src.release(fr);
+                    }
+                }
+                if (!seen) break;
+                SystemClock.sleep(50);
+            }
+        } catch (InterruptedException e) {
+            return -1;
+        } finally {
+            ui.post(this::render);
+        }
+        if (samples.size() < 2) return -1;
+        sCapLat = Math.max(5, Math.min(400, median(samples)));
+        sCapFor = cs;
+        return sCapLat;
+    }
+
+    private void setBtnColor(int color) {
+        if (mainBtn == null) return;
+        GradientDrawable c = new GradientDrawable();
+        c.setShape(GradientDrawable.OVAL);
+        c.setColor(color);
+        mainBtn.setBackground(c);
     }
 
     /** 画面に出てから見つけるまでの平均の待ち（フレーム間隔の半分） */

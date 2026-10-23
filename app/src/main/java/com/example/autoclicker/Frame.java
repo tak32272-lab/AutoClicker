@@ -7,6 +7,7 @@ final class Frame {
     float sx, sy;      // 画面ピクセル ÷ 作業ピクセル
     int f;             // 縮小倍率（登録画像の作り方と合わせる）
     long tsMs;         // 撮った時刻（System.nanoTime 基準のミリ秒）
+    long arrMs;        // こちらに届いた時刻
     long seq;          // 何枚目か
     boolean inUse;     // 処理中（上書きしない）
 

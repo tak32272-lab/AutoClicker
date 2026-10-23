@@ -32,6 +32,12 @@ for name, ls in sections.items():
     along = [float(re.search(r"along=(-?\d+)", l).group(1)) for l in hits + miss if "along=" in l]
     dist = [float(re.search(r"dist=(\d+)", l).group(1)) for l in hits]
     scans = [l for l in ls if " AC " in l and "scan " in l]
+    cal = [l for l in ls if "calibration" in l]
+    ntap = sum(int(re.search(r"tap n=(\d+)", l).group(1)) for l in ls if " AC " in l and "tap n=" in l)
+    if cal:
+        print("  " + cal[-1].split(" AC ", 1)[-1].strip())
+    if hits and ntap:
+        print("  taps per hit: %.2f" % (ntap / len(hits)))
     print("== %s" % name)
     print("  spawned %d  hit %d  miss-taps %d  timeout %d" % (spawn, len(hits), len(miss), tout))
     if react:

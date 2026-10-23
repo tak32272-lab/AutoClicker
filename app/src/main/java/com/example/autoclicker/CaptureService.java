@@ -226,6 +226,7 @@ public class CaptureService extends Service {
             long now = Frame.nowMs();
             long ts = img.getTimestamp() / 1_000_000L;
             fr.tsMs = (ts > 0 && ts <= now + 5 && now - ts < 1000) ? ts : now;
+            fr.arrMs = now;
             ex.publish(fr);
         } catch (Throwable e) {
             Log.w(TAG, "frame copy failed", e);
