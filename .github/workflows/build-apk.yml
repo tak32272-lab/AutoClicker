@@ -2,6 +2,8 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,3 +21,13 @@ jobs:
         with:
           name: AutoClicker-apk
           path: app/build/outputs/apk/debug/*.apk
+      - name: Publish APK to apk-out branch
+        run: |
+          mkdir /tmp/out && cp app/build/outputs/apk/debug/app-debug.apk /tmp/out/AutoClicker.apk
+          cd /tmp/out
+          git init -q -b apk-out
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add AutoClicker.apk
+          git commit -q -m "APK from ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" apk-out
