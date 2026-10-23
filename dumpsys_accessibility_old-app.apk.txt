@@ -1,0 +1,49 @@
+ACCESSIBILITY MANAGER (dumpsys accessibility)
+
+currentUserId=0
+hasMagnificationConnection=false
+Magnifier on display#0
+    MagnificationConfig[mode: 1, activated: false, scale: 1.0, centerX: 540.0, centerY: 1200.0] 
+    Magnification region=SkRegion((0,0,1080,2400))
+    IdOfLastServiceToMagnify=-1
+    SupportWindowMagnification=true
+    WindowMagnificationConnectionState=DISCONNECTED
+User state[
+     attributes:{id=0, touchExplorationEnabled=false, serviceHandlesDoubleTap=false, requestMultiFingerGestures=false, requestTwoFingerPassthrough=false, sendMotionEventsEnabledfalse, displayMagnificationEnabled=false, autoclickEnabled=false, nonInteractiveUiTimeout=0, interactiveUiTimeout=0, installedServiceCount=4, magnificationModes={0=1}, magnificationCapabilities=3, audioDescriptionByDefaultEnabled=false, magnificationFollowTypingEnabled=true, alwaysOnMagnificationEnabled=true}
+     shortcut key:{}
+     button:{}
+     button target:{null}
+     qs shortcut targets:{}
+     a11y tiles in QS panel:{}
+     Bound services:{Service[label=オートクリッカー, feedbackType[FEEDBACK_GENERIC], capabilities=160, eventTypes=TYPE_WINDOW_STATE_CHANGED, notificationTimeout=100, requestA11yBtn=false]}
+     Enabled services:{{com.example.autoclicker/com.example.autoclicker.ClickerService}}
+     Binding services:{}
+     Crashed services:{}
+     Client list info:{
+          Client list callbacks: 10
+          Client list killed: false
+          Client list broadcasts count: -1
+          Registered clients:{
+[com.google.android.apps.wellbeing][com.google.android.googlequicksearchbox][com.google.android.apps.messaging][com.google.android.apps.nexuslauncher][com.google.android.as][com.example.testgame][com.google.android.googlequicksearchbox][com.google.android.inputmethod.latin][com.google.android.tts][com.example.autoclicker]}]
+Global Info [ Top focused display Id = 0
+     Active Window Id = -1
+     Top Focused Window Id = 28
+     Accessibility Focused Window Id = -1 ]
+
+
+Window attributes:[{19=AccessibilityWindowAttributes{mAccessibilityWindowTitle=nullmLocales=[en_US]}, 20=AccessibilityWindowAttributes{mAccessibilityWindowTitle=Navigation barmLocales=[en_US]}, 21=AccessibilityWindowAttributes{mAccessibilityWindowTitle=HomemLocales=[en_US]}, 22=AccessibilityWindowAttributes{mAccessibilityWindowTitle=nullmLocales=[en_US]}, 23=AccessibilityWindowAttributes{mAccessibilityWindowTitle=nullmLocales=[en_US]}, 24=AccessibilityWindowAttributes{mAccessibilityWindowTitle=nullmLocales=[en_US]}, 25=AccessibilityWindowAttributes{mAccessibilityWindowTitle=nullmLocales=[en_US]}, 26=AccessibilityWindowAttributes{mAccessibilityWindowTitle=Navigation bar Edge PanelmLocales=[en_US]}, 27=AccessibilityWindowAttributes{mAccessibilityWindowTitle=nullmLocales=[en_US]}, 28=AccessibilityWindowAttributes{mAccessibilityWindowTitle=TestGamemLocales=[en_US]}, 29=AccessibilityWindowAttributes{mAccessibilityWindowTitle=nullmLocales=[en_US]}}]
+A11yInputFilter Info : 
+Enabled features of Display [0] = [MotionEventInjector]
+Global client list info:{
+    Client list callbacks: 6
+    Client list killed: false
+    Client list broadcasts count: -1
+    Registered clients:{
+[com.google.android.documentsui][com.google.android.gsf, com.google.android.gms][com.google.android.googlesdksetup][com.android.localtransport, com.android.location.fused, com.android.providers.settings, com.android.keychain, com.android.server.telecom, com.android.inputdevices, com.android.emulator.multidisplay, com.android.dynsystem, android, com.android.DeviceAsWebcam, com.android.settings][com.android.systemui][com.google.android.permissioncontroller]
+
+Proxy manager state:
+    Number of proxy connections: 0
+    Registered proxy connections:
+Accessibility Display Listener:
+    SystemUI uid: 10181
+    1 valid display: 0

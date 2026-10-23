@@ -1,0 +1,221 @@
+[14:45:10] waiting for boot
+Physical size: 1080x2400
+Physical density: 420
+Override density: 440
+[14:46:02] screen height 2400 density 440
+[14:46:02] install test game
+Success
+[14:46:02] make template
+[14:46:18] template line: 10-23 14:46:11.231  4307  4307 I TG      : TPL cx=540 cy=1378
+screen (1080, 2400) crop (438, 1251, 639, 1473)
+[14:46:18] old button at 131 547 (density 440)
+[14:46:18] prepare clicker old-app.apk
+install(-i vending): Success
+files/templates:
+t1.png
+
+shared_prefs:
+ac.xml
+[14:46:32] accessibility bound (try 1)
+com.example.autoclicker/.ClickerService
+    scannedAsStoppedSystemApp=false
+    installerPackageName=com.android.vending
+    installerPackageUid=10154
+    User 0: ceDataInode=369180 deDataInode=81931 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false quarantined=false
+Uid mode: COARSE_LOCATION: ignore
+FINE_LOCATION: ignore
+READ_CONTACTS: ignore
+WRITE_CONTACTS: ignore
+READ_CALL_LOG: ignore
+WRITE_CALL_LOG: ignore
+READ_CALENDAR: ignore
+WRITE_CALENDAR: ignore
+POST_NOTIFICATION: ignore
+CALL_PHONE: ignore
+READ_SMS: ignore
+RECEIVE_SMS: ignore
+RECEIVE_MMS: ignore
+RECEIVE_WAP_PUSH: ignore
+SEND_SMS: ignore
+CAMERA: ignore
+RECORD_AUDIO: ignore
+READ_PHONE_STATE: ignore
+ADD_VOICEMAIL: ignore
+USE_SIP: ignore
+PROCESS_OUTGOING_CALLS: ignore
+BODY_SENSORS: ignore
+READ_CELL_BROADCASTS: ignore
+READ_EXTERNAL_STORAGE: ignore
+WRITE_EXTERNAL_STORAGE: ignore
+GET_ACCOUNTS: ignore
+READ_PHONE_NUMBERS: ignore
+ANSWER_PHONE_CALLS: ignore
+ACCEPT_HANDOVER: ignore
+BLUETOOTH_SCAN: ignore
+ACTIVITY_RECOGNITION: ignore
+READ_MEDIA_AUDIO: ignore
+READ_MEDIA_VIDEO: ignore
+READ_MEDIA_IMAGES: ignore
+ACCESS_MEDIA_LOCATION: ignore
+BLUETOOTH_CONNECT: ignore
+UWB_RANGING: ignore
+BLUETOOTH_ADVERTISE: ignore
+NEARBY_WIFI_DEVICES: ignore
+READ_MEDIA_VISUAL_USER_SELECTED: ignore
+PROJECT_MEDIA: allow
+BIND_ACCESSIBILITY_SERVICE: allow; time=+11s137ms ago
+ACCESS_ACCESSIBILITY: allow; time=+3s870ms ago
+ACCESS_RESTRICTED_SETTINGS: allow; time=+4s823ms ago
+CREATE_ACCESSIBILITY_OVERLAY: allow; time=+4s329ms ago (running)
+[14:46:34] old scan old_static speed=0 alive=1
+[14:47:11] old scan old_move speed=600 alive=2
+[14:47:48] prepare clicker app/build/outputs/apk/debug/app-debug.apk
+install(-i vending): Success
+files/templates:
+t1.png
+
+shared_prefs:
+ac.xml
+[14:48:02] accessibility bound (try 1)
+com.example.autoclicker/.ClickerService
+    scannedAsStoppedSystemApp=false
+    installerPackageName=com.android.vending
+    installerPackageUid=10154
+    User 0: ceDataInode=376940 deDataInode=81924 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false quarantined=false
+Uid mode: COARSE_LOCATION: ignore
+FINE_LOCATION: ignore
+READ_CONTACTS: ignore
+WRITE_CONTACTS: ignore
+READ_CALL_LOG: ignore
+WRITE_CALL_LOG: ignore
+READ_CALENDAR: ignore
+WRITE_CALENDAR: ignore
+CALL_PHONE: ignore
+READ_SMS: ignore
+RECEIVE_SMS: ignore
+RECEIVE_MMS: ignore
+RECEIVE_WAP_PUSH: ignore
+SEND_SMS: ignore
+CAMERA: ignore
+RECORD_AUDIO: ignore
+READ_PHONE_STATE: ignore
+ADD_VOICEMAIL: ignore
+USE_SIP: ignore
+PROCESS_OUTGOING_CALLS: ignore
+BODY_SENSORS: ignore
+READ_CELL_BROADCASTS: ignore
+READ_EXTERNAL_STORAGE: ignore
+WRITE_EXTERNAL_STORAGE: ignore
+GET_ACCOUNTS: ignore
+READ_PHONE_NUMBERS: ignore
+ANSWER_PHONE_CALLS: ignore
+ACCEPT_HANDOVER: ignore
+BLUETOOTH_SCAN: ignore
+ACTIVITY_RECOGNITION: ignore
+READ_MEDIA_AUDIO: ignore
+READ_MEDIA_VIDEO: ignore
+READ_MEDIA_IMAGES: ignore
+ACCESS_MEDIA_LOCATION: ignore
+BLUETOOTH_CONNECT: ignore
+UWB_RANGING: ignore
+BLUETOOTH_ADVERTISE: ignore
+NEARBY_WIFI_DEVICES: ignore
+READ_MEDIA_VISUAL_USER_SELECTED: ignore
+PROJECT_MEDIA: allow
+BIND_ACCESSIBILITY_SERVICE: allow; time=+10s418ms ago
+ACCESS_ACCESSIBILITY: allow; time=+3s775ms ago
+ACCESS_RESTRICTED_SETTINGS: default; rejectTime=+4s496ms ago
+CREATE_ACCESSIBILITY_OVERLAY: allow; time=+3s892ms ago (running)
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats 
+[14:48:02] settings screenshots
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats 
+[14:48:40] scan fast_static mode=fast speed=0 predict=true alive=1
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats 
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats 
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=25.7 proc=33.2ms react=151ms taps=24 frames=406 tracks=1
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.7 proc=23.1ms react=170ms taps=45 frames=782 tracks=0
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.7 proc=23.1ms react=170ms taps=45 frames=782 tracks=0
+[14:49:20] scan fast_move mode=fast speed=600 predict=true alive=2
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.7 proc=23.1ms react=170ms taps=45 frames=782 tracks=0
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.7 proc=23.1ms react=170ms taps=45 frames=782 tracks=0
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=24.9 proc=57.2ms react=189ms taps=82 frames=464 tracks=2
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.9 proc=25.5ms react=155ms taps=142 frames=821 tracks=1
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.9 proc=25.5ms react=155ms taps=142 frames=821 tracks=1
+[14:50:01] scan fast_move_nopred mode=fast speed=600 predict=false alive=2
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.9 proc=25.5ms react=155ms taps=142 frames=821 tracks=1
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=39.9 proc=25.5ms react=155ms taps=142 frames=821 tracks=1
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=22.8 proc=44.5ms react=194ms taps=103 frames=442 tracks=1
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=27.9 proc=27.6ms react=160ms taps=185 frames=802 tracks=2
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=27.9 proc=27.6ms react=160ms taps=185 frames=802 tracks=2
+[14:50:42] scan fast_fast mode=fast speed=1200 predict=true alive=1
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=27.9 proc=27.6ms react=160ms taps=185 frames=802 tracks=2
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=27.9 proc=27.6ms react=160ms taps=185 frames=802 tracks=2
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=44.8 proc=28.1ms react=163ms taps=46 frames=474 tracks=1
+    state=4 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=30.3 proc=34.2ms react=154ms taps=80 frames=845 tracks=1
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=30.3 proc=34.2ms react=154ms taps=80 frames=845 tracks=1
+    state=0 actions=0 capture=true panel=33,330,719,609
+    stats mode=fast fps=30.3 proc=34.2ms react=154ms taps=80 frames=845 tracks=1
+[14:51:25] scan slow_static mode=slow speed=0 predict=true alive=1
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=fast fps=30.3 proc=34.2ms react=154ms taps=80 frames=845 tracks=1
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=fast fps=30.3 proc=34.2ms react=154ms taps=80 frames=845 tracks=1
+    state=4 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.8 proc=17.1ms react=258ms taps=24 frames=54 tracks=1
+    state=4 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.6 proc=25.5ms react=312ms taps=43 frames=94 tracks=1
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.6 proc=25.5ms react=312ms taps=43 frames=94 tracks=1
+[14:52:06] scan slow_move mode=slow speed=600 predict=true alive=2
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.6 proc=25.5ms react=312ms taps=43 frames=94 tracks=1
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.6 proc=25.5ms react=312ms taps=43 frames=94 tracks=1
+    state=4 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.8 proc=25.9ms react=263ms taps=96 frames=56 tracks=5
+    state=4 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+[14:52:47] record
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+    state=0 actions=0 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+    state=1 actions=8 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+    state=2 actions=8 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+    state=2 actions=8 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+[14:53:14] fast taps while recording
+    state=2 actions=8 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+    state=1 actions=3 capture=false panel=33,330,719,609
+    stats mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+[14:53:17] collect logs
+[14:53:20] done

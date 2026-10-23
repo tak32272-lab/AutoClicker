@@ -1,0 +1,68 @@
+== old_static
+  spawned 28  hit 28  miss-taps 0  timeout 0
+  reaction ms: median 614  mean 666  p90 889  min 353  max 2363
+  hit distance from center px: mean 16  max 18
+  tap offset along motion px (+=ahead): mean 0
+== old_move
+  spawned 19  hit 2  miss-taps 76  timeout 18
+  reaction ms: median 1355  mean 1356  p90 1472  min 1239  max 1472
+  hit distance from center px: mean 56  max 64
+  tap offset along motion px (+=ahead): mean -158
+  : calibration injLat=2 capLat=126
+  taps per hit: 1.00
+== fast_static
+  spawned 47  hit 46  miss-taps 0  timeout 0
+  reaction ms: median 184  mean 196  p90 243  min 115  max 621
+  hit distance from center px: mean 3  max 5
+  tap offset along motion px (+=ahead): mean 0
+  last clicker stats: end mode=fast fps=39.7 proc=23.1ms react=170ms taps=45 frames=782 tracks=0
+  : calibration injLat=2 capLat=126
+  taps per hit: 2.29
+== fast_move
+  spawned 63  hit 63  miss-taps 81  timeout 0
+  reaction ms: median 532  mean 625  p90 1044  min 97  max 1948
+  hit distance from center px: mean 33  max 72
+  tap offset along motion px (+=ahead): mean -58
+  last clicker stats: end mode=fast fps=39.9 proc=25.5ms react=155ms taps=142 frames=821 tracks=1
+  : calibration injLat=2 capLat=126
+  taps per hit: 11.62
+== fast_move_nopred
+  spawned 27  hit 16  miss-taps 170  timeout 11
+  reaction ms: median 1228  mean 1473  p90 2844  min 187  max 2930
+  hit distance from center px: mean 52  max 75
+  tap offset along motion px (+=ahead): mean -108
+  last clicker stats: end mode=fast fps=27.9 proc=27.6ms react=160ms taps=185 frames=802 tracks=2
+  : calibration injLat=2 capLat=126
+  taps per hit: 2.86
+== fast_fast
+  spawned 28  hit 28  miss-taps 52  timeout 0
+  reaction ms: median 807  mean 812  p90 1507  min 456  max 2023
+  hit distance from center px: mean 35  max 68
+  tap offset along motion px (+=ahead): mean -101
+  last clicker stats: end mode=fast fps=30.3 proc=34.2ms react=154ms taps=80 frames=845 tracks=1
+  : calibration injLat=2 capLat=-1
+  taps per hit: 1.22
+== slow_static
+  spawned 36  hit 36  miss-taps 8  timeout 0
+  reaction ms: median 476  mean 520  p90 769  min 242  max 1561
+  hit distance from center px: mean 3  max 5
+  tap offset along motion px (+=ahead): mean 0
+  last clicker stats: end mode=slow fps=2.6 proc=25.5ms react=312ms taps=43 frames=94 tracks=1
+  : calibration injLat=2 capLat=-1
+  taps per hit: 14.25
+== slow_move
+  spawned 25  hit 12  miss-taps 159  timeout 13
+  reaction ms: median 1377  mean 1632  p90 2606  min 373  max 2846
+  hit distance from center px: mean 52  max 73
+  tap offset along motion px (+=ahead): mean -138
+  last clicker stats: end mode=slow fps=2.9 proc=19.7ms react=220ms taps=169 frames=96 tracks=3
+== record
+  recorded actions 8, game received DOWN 9, CANCEL 0, self-hit retries 7
+  finger-up -> game touch latency ms: median 190  max 267
+== playback
+  game received DOWN 8 (expected 8)
+  timing error vs recording ms: mean 0.0  max 0
+  : play batch loop=1 from=0 n=8 late=0
+== record fast taps
+  recorded 3, game received DOWN 5 (sent 10)
+== crashes: 0 lines
