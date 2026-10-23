@@ -34,6 +34,8 @@ press_start() {
 log "waiting for boot"
 adb wait-for-device
 until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep 2; done
+adb shell settings put global hide_error_dialogs 1
+sleep 20
 adb shell getprop ro.build.version.release | tee $OUT/android_version.txt
 adb shell getprop ro.build.version.sdk | tee -a $OUT/android_version.txt
 adb logcat -G 16M || true
@@ -84,9 +86,18 @@ prepare_app() {
   adb shell am force-stop $PKG
   adb shell "run-as $PKG sh -c 'mkdir -p files/templates shared_prefs && cp /data/local/tmp/t1.png files/templates/t1.png && cp /data/local/tmp/ac.xml shared_prefs/ac.xml && ls files/templates shared_prefs'" 2>&1 | tee -a $OUT/steps.txt
   adb shell appops set $PKG PROJECT_MEDIA allow
-  adb shell settings put secure enabled_accessibility_services $PKG/$PKG.ClickerService
-  adb shell settings put secure accessibility_enabled 1
-  sleep 5
+  # インストール直後はシステムが設定を書き戻すことがあるので、つながるまで繰り返す
+  sleep 6
+  for k in 1 2 3 4 5 6; do
+    adb shell "settings put secure enabled_accessibility_services $PKG/.ClickerService"
+    adb shell settings put secure accessibility_enabled 1
+    sleep 4
+    if adb shell dumpsys accessibility | grep -A1 "Bound services" | grep -q "オートクリッカー\|autoclicker"; then
+      log "accessibility bound (try $k)"
+      break
+    fi
+    log "accessibility not bound yet (try $k)"
+  done
   adb shell settings get secure enabled_accessibility_services | tee -a $OUT/steps.txt
   adb shell dumpsys accessibility > $OUT/dumpsys_accessibility_$(basename $apk).txt 2>&1
   adb shell dumpsys package $PKG | grep -i -E "stopped|installer|restrict" | tee -a $OUT/steps.txt
