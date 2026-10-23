@@ -4,9 +4,11 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.Editable;
@@ -230,6 +232,13 @@ public class MainActivity extends Activity {
                 + "※ アップデート後に画像の機能が動かないときは、ユーザー補助を一度オフ→オンにしてください。", 13));
 
         setContentView(sv);
+
+        // 高速モード中の通知（「終了」ボタン）を出せるように、最初の1回だけ許可を求める
+        if (Build.VERSION.SDK_INT >= 33 && !sp.getBoolean("askedNotif", false)
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            sp.edit().putBoolean("askedNotif", true).apply();
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 1);
+        }
     }
 
     @Override

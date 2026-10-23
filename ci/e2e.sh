@@ -19,10 +19,26 @@ press_start() {
   for k in 1 2 3; do
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
     adb pull /sdcard/ui.xml $OUT/ui_$k.xml >/dev/null 2>&1 || true
-    xy=$(python3 ci/ui_find.py $OUT/ui_$k.xml 2>/dev/null)
+    xy=$(python3 ci/ui_find.py $OUT/ui_$k.xml start 2>/dev/null)
     if [ -n "$xy" ]; then
       log "dialog button at $xy"
       shot dialog_$k
+      adb shell input tap $xy
+      sleep 2
+    else
+      break
+    fi
+  done
+}
+
+# 「応答していません」などのシステムのダイアログが出ていたら閉じる
+dismiss_dialogs() {
+  for k in 1 2 3; do
+    adb shell uiautomator dump /sdcard/ui2.xml >/dev/null 2>&1
+    adb pull /sdcard/ui2.xml /tmp/ui2.xml >/dev/null 2>&1 || true
+    xy=$(python3 ci/ui_find.py /tmp/ui2.xml anr 2>/dev/null)
+    if [ -n "$xy" ]; then
+      log "closing system dialog at $xy"
       adb shell input tap $xy
       sleep 2
     else
@@ -35,7 +51,8 @@ log "waiting for boot"
 adb wait-for-device
 until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep 2; done
 adb shell settings put global hide_error_dialogs 1
-sleep 20
+sleep 45
+dismiss_dialogs
 adb shell getprop ro.build.version.release | tee $OUT/android_version.txt
 adb shell getprop ro.build.version.sdk | tee -a $OUT/android_version.txt
 adb logcat -G 16M || true
@@ -59,6 +76,9 @@ adb install -r -g $TGA 2>&1 | tail -1 | tee -a $OUT/steps.txt
 
 # ---------- 登録画像を作る ----------
 log "make template"
+adb shell am start -S -W -n $TGP/.GameActivity --es mode template >/dev/null
+sleep 3
+dismiss_dialogs
 adb shell am start -S -W -n $TGP/.GameActivity --es mode template >/dev/null
 sleep 4
 shot tpl_screen
@@ -136,7 +156,7 @@ dsys
 # ---------- 設定画面の見た目（文字切れ・スクロール） ----------
 ui_shots() {
   local tag=$1
-  adb shell am start -S -W -n $PKG/.MainActivity >/dev/null
+  adb shell am start -W -n $PKG/.MainActivity >/dev/null
   sleep 3
   for i in 1 2 3 4 5 6; do
     shot "ui_${tag}_$i"
@@ -164,8 +184,14 @@ run_scan() {
   sleep 2
   mark "start $name"
   dsys scan $mode
-  sleep 3
-  press_start
+  sleep 4
+  # 画面共有の確認で止まっているときだけ「開始」を押す（uiautomator はユーザー補助を一時停止させるため）
+  if adb shell dumpsys activity service $SVC | grep -q "state=6"; then
+    log "waiting for projection consent -> press start"
+    press_start
+    sleep 4
+    dsys scan $mode
+  fi
   sleep $((dur / 2))
   shot "scan_$name"
   dsys

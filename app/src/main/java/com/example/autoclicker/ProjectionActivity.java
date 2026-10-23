@@ -41,6 +41,7 @@ public class ProjectionActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ) return;
+        android.util.Log.i("AC", "projection result=" + resultCode);
         if (resultCode == RESULT_OK && data != null) {
             Intent s = new Intent(this, CaptureService.class)
                     .putExtra("code", resultCode)

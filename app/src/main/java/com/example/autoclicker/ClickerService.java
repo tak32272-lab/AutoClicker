@@ -136,6 +136,7 @@ public class ClickerService extends AccessibilityService {
 
     @Override
     public boolean onUnbind(Intent intent) {
+        Log.i(TAG, "service unbind");
         cleanup();
         return super.onUnbind(intent);
     }
@@ -1074,6 +1075,7 @@ public class ClickerService extends AccessibilityService {
         }
         boolean fast = prefs().getBoolean("fast", true);
         CaptureService cs = CaptureService.instance;
+        Log.i(TAG, "requestScan fast=" + fast + " capture=" + (cs != null && cs.alive()));
         if (fast && cs != null && cs.alive()) {
             startScan(true);
         } else if (fast) {
@@ -1154,6 +1156,7 @@ public class ClickerService extends AccessibilityService {
         abort = false;
         state = SCAN;
         render();
+        Log.i(TAG, "startScan fast=" + src.fast() + " templates=" + list.size());
         final Frame.Source s0 = src;
         new Thread(() -> scanLoop(list, s0), "ac-scan").start();
     }
@@ -1283,6 +1286,9 @@ public class ClickerService extends AccessibilityService {
                             taps += used.size();
                             float r = now - used.get(0).last;
                             reactMs = reactMs == 0 ? r : reactMs * 0.8f + r * 0.2f;
+                            Tracker.Track k0 = used.get(0);
+                            Log.i(TAG, String.format(Locale.US, "tap n=%d at=%d frameAge=%.0f id=%d obs=%d v=%.2f,%.2f",
+                                    used.size(), SystemClock.uptimeMillis(), r, k0.id, k0.obs, k0.vx, k0.vy));
                         }
                     }
                 }
