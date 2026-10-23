@@ -18,8 +18,18 @@ final class TemplateStore {
 
     private TemplateStore() { }
 
+    /** 種類：ふつう（見つけた所をタップ）／ドン／カッ／連打（音ゲーモード用） */
+    static final String[] KINDS = {"normal", "don", "ka", "roll"};
+    static final String[] KIND_LABELS = {"ふつう", "ドン", "カッ", "連打・風船"};
+
+    static String kindLabel(String k) {
+        for (int i = 0; i < KINDS.length; i++) if (KINDS[i].equals(k)) return KIND_LABELS[i];
+        return KIND_LABELS[0];
+    }
+
     static final class Tpl {
         String id, name;
+        String kind = "normal";
         boolean enabled = true;
         int w, h;
         int[] argb;
@@ -27,13 +37,20 @@ final class TemplateStore {
         private int cacheF = -1;
         private ImageMatcher.Template cache;
 
+        /** 種類を変えたとき、作り直すようにする */
+        void invalidate() {
+            cacheF = -1;
+            cache = null;
+        }
+
         /** 画面の縮小倍率 f に合わせた照合用データ（作ったものは覚えておく） */
         ImageMatcher.Template template(int f) {
             if (f != cacheF) {
                 cacheF = f;
                 cache = null;
                 if (argb != null && w / f >= 3 && h / f >= 3) {
-                    ImageMatcher.Template t = ImageMatcher.Template.create(argb, w, h, f, true);
+                    // 連打は黄色い帯が切り取りのふちまで続くので、背景を自動で除かずに全体で比べる
+                    ImageMatcher.Template t = ImageMatcher.Template.create(argb, w, h, f, !"roll".equals(kind));
                     if (t.usable()) cache = t;
                 }
             }
@@ -62,6 +79,7 @@ final class TemplateStore {
                 t.id = o.getString("id");
                 t.name = o.optString("name", "画像");
                 t.enabled = o.optBoolean("on", true);
+                t.kind = o.optString("kind", "normal");
                 if (file(c, t.id).exists()) out.add(t);
             }
         } catch (Exception ignored) { }
@@ -92,6 +110,7 @@ final class TemplateStore {
                 o.put("id", t.id);
                 o.put("name", t.name);
                 o.put("on", t.enabled);
+                o.put("kind", t.kind);
                 a.put(o);
             }
             prefs(c).edit().putString("tpls", a.toString()).apply();
@@ -100,12 +119,18 @@ final class TemplateStore {
 
     /** 新しい画像を一番下（優先度いちばん低い）に追加して、名前を返す。失敗なら null */
     static String add(Context c, Bitmap crop) {
+        return add(c, crop, "normal");
+    }
+
+    static String add(Context c, Bitmap crop, String kind) {
         List<Tpl> list = meta(c);
         Tpl t = new Tpl();
         t.id = "t" + System.currentTimeMillis();
-        int n = list.size() + 1;
+        t.kind = kind;
+        String base = "normal".equals(kind) ? "画像" : kindLabel(kind);
+        int n = 1;
         String name;
-        do { name = "画像" + n++; } while (hasName(list, name));
+        do { name = base + n++; } while (hasName(list, name));
         t.name = name;
         try (FileOutputStream os = new FileOutputStream(file(c, t.id))) {
             if (!crop.compress(Bitmap.CompressFormat.PNG, 100, os)) return null;

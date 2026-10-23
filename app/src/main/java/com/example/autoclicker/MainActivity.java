@@ -36,7 +36,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
 
     private SharedPreferences sp;
-    private TextView stateTv, speedTv, thrTv, coolTv, roiTv, transTv, tapTv;
+    private TextView stateTv, speedTv, thrTv, coolTv, roiTv, transTv, tapTv, offTv, rollTv;
     private LinearLayout listBox;
     private List<TemplateStore.Tpl> tpls;
 
@@ -222,6 +222,36 @@ public class MainActivity extends Activity {
             showLabels();
         }));
 
+        // ---------- 音ゲーモード ----------
+        root.addView(header("🥁 音ゲーモード（太鼓）"));
+        CheckBox rh = new CheckBox(this);
+        rh.setText("音ゲーモードにする（パネルが「🥁 開始」「🎯 位置」に変わります）");
+        rh.setTextSize(15);
+        rh.setChecked(sp.getBoolean("rhythm", false));
+        rh.setOnCheckedChangeListener((b, on) -> {
+            sp.edit().putBoolean("rhythm", on).apply();
+            refreshPanel();
+        });
+        root.addView(rh);
+        root.addView(tv("1. 太鼓のゲームを開き、パネルの「🎯 位置」で ①判定の丸 ②ドンで押す場所（白い所） ③カッで押す場所（青い所） の順にタップして保存\n"
+                + "2. 「📷 登録」で音符を1つ囲み、「ドン」「カッ」「連打」のどれかを押して登録（大音符・風船・くす玉も、それぞれ囲んで登録）\n"
+                + "3. 曲を始めて「🥁 開始」。音符が判定の丸に届く時刻を計算して、ぴったりに叩きます\n"
+                + "・連打と風船は、判定の丸に来ている間ずっと連打します\n"
+                + "・判定が「早い」「遅い」になるときは、下のタイミング調整で直せます", 14));
+
+        offTv = tv("", 15);
+        root.addView(offTv);
+        root.addView(seek(60, (sp.getInt("rOffset", 0) + 150) / 5, p -> {   // -150〜+150ms
+            sp.edit().putInt("rOffset", p * 5 - 150).apply();
+            showLabels();
+        }));
+        rollTv = tv("", 15);
+        root.addView(rollTv);
+        root.addView(seek(22, (sp.getInt("rollMs", 60) - 40) / 5, p -> {    // 40〜150ms
+            sp.edit().putInt("rollMs", 40 + p * 5).apply();
+            showLabels();
+        }));
+
         root.addView(header("登録した画像（上ほど優先）"));
         listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
@@ -260,6 +290,10 @@ public class MainActivity extends Activity {
         coolTv.setText("同じ敵をもう一度タップするまでの間隔 " + String.format(Locale.US, "%.1f", cool / 10f) + "秒"
                 + (cool == 0 ? "（連打）" : "") + "\n（ほかの敵は待たずにすぐタップします）");
         tapTv.setText("タップの長さ " + sp.getInt("tapMs", 40) + "ミリ秒（ゲームが反応しないときは長く）");
+        int off = sp.getInt("rOffset", 0);
+        offTv.setText("タイミング調整 " + (off > 0 ? "+" : "") + off + "ミリ秒（「早い」なら＋へ、「遅い」なら−へ）");
+        int rm = sp.getInt("rollMs", 60);
+        rollTv.setText(String.format(Locale.US, "連打の速さ 1秒に%.0f回", 1000f / rm));
         roiTv.setText(sp.getString("roi", "").isEmpty()
                 ? "探す範囲：全画面（パネルの「🔲 範囲」で変更）"
                 : "探す範囲：指定あり（パネルの「🔲 範囲」で変更）");
@@ -310,6 +344,21 @@ public class MainActivity extends Activity {
         }));
         col.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // 種類（音ゲーモード用）：押すたびに ふつう → ドン → カッ → 連打・風船
+        final Button kindBtn = small("種類：" + TemplateStore.kindLabel(t.kind), null);
+        kindBtn.setOnClickListener(v -> {
+            int k = 0;
+            for (int j = 0; j < TemplateStore.KINDS.length; j++) if (TemplateStore.KINDS[j].equals(t.kind)) k = j;
+            t.kind = TemplateStore.KINDS[(k + 1) % TemplateStore.KINDS.length];
+            t.invalidate();
+            TemplateStore.save(this, tpls);
+            kindBtn.setText("種類：" + TemplateStore.kindLabel(t.kind));
+        });
+        LinearLayout.LayoutParams klp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        klp.topMargin = dp(4);
+        col.addView(kindBtn, klp);
 
         LinearLayout btns = new LinearLayout(this);
         btns.setOrientation(LinearLayout.HORIZONTAL);

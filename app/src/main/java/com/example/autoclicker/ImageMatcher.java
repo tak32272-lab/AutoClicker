@@ -303,11 +303,21 @@ public final class ImageMatcher {
         final Prep[] lv = new Prep[3];   // 0:等倍 1:1/2 2:1/4
         final int topLevel;              // 全体を調べる段
         final Prep top;                  // その段の、間引いた画素
+        public final float cx, cy;       // 中身（背景以外）の中心（左上からの位置、作業解像度）
 
         private Template(Gray gray, boolean[] mask, float[] color) {
             this.gray = gray;
             this.mask = mask;
             this.color = color;
+            float sx = 0, sy = 0;
+            int cnt = 0;
+            if (mask != null) {
+                for (int y = 0; y < gray.h; y++)
+                    for (int x = 0; x < gray.w; x++)
+                        if (mask[y * gray.w + x]) { sx += x + 0.5f; sy += y + 0.5f; cnt++; }
+            }
+            cx = cnt > 0 ? sx / cnt : gray.w / 2f;
+            cy = cnt > 0 ? sy / cnt : gray.h / 2f;
             lv[0] = prep(gray, mask);
             int topL = 0;
             Gray g = gray;

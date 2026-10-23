@@ -93,7 +93,7 @@ public class ClickerService extends AccessibilityService {
     private View dragArea;
     private volatile long calibAt = -1, calibGot = -1;
     private WindowManager.LayoutParams panelLp;
-    private TextView mainBtn, titleTv, subTv, scanBtn;
+    private TextView mainBtn, titleTv, subTv, scanBtn, rangeBtn;
     private volatile int[] panelRect = {0, 0, 0, 0};
 
     private View recLayer;
@@ -156,6 +156,10 @@ public class ClickerService extends AccessibilityService {
         abort = true;
         removeRecLayer();
         removeCrop();
+        if (posRoot != null) {
+            try { wm.removeView(posRoot); } catch (Exception ignored) { }
+            posRoot = null;
+        }
         if (panel != null) {
             try { wm.removeView(panel); } catch (Exception ignored) { }
             panel = null;
@@ -176,6 +180,11 @@ public class ClickerService extends AccessibilityService {
 
     private SharedPreferences prefs() {
         return getSharedPreferences("ac", MODE_PRIVATE);
+    }
+
+    /** 音ゲーモード（太鼓）か */
+    private boolean rhythm() {
+        return prefs().getBoolean("rhythm", false);
     }
 
     private void toast(String s) {
@@ -315,7 +324,11 @@ public class ClickerService extends AccessibilityService {
         scanBtn = smallBtn("🔍 探す", v -> onScanBtn());
         row2.addView(scanBtn, weightLp(34));
         row2.addView(smallBtn("📷 登録", v -> startCapture(false)), weightLp(34));
-        row2.addView(smallBtn("🔲 範囲", v -> startCapture(true)), weightLp(34));
+        rangeBtn = smallBtn("🔲 範囲", v -> {
+            if (rhythm()) startPositionSetup();
+            else startCapture(true);
+        });
+        row2.addView(rangeBtn, weightLp(34));
         row2.addView(smallBtn("🗑 消去", v -> clearAll()), weightLp(34));
         panel.addView(row2, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -344,6 +357,11 @@ public class ClickerService extends AccessibilityService {
         if (state == REC) stopRec();
         if (state == WAIT) state = actions.isEmpty() ? IDLE : READY;
         removeCrop();
+        if (posRoot != null) {
+            try { wm.removeView(posRoot); } catch (Exception ignored) { }
+            posRoot = null;
+            state = actions.isEmpty() ? IDLE : READY;
+        }
         if (panel != null) {
             try { wm.removeView(panel); } catch (Exception ignored) { }
             panel = null;
@@ -374,7 +392,10 @@ public class ClickerService extends AccessibilityService {
         c.setShape(GradientDrawable.OVAL);
         c.setColor(color);
         mainBtn.setBackground(c);
-        scanBtn.setText(state == SCAN || state == WAIT ? "⏹ 停止" : "🔍 探す");
+        boolean rh = rhythm();
+        scanBtn.setText(state == SCAN || state == WAIT ? "⏹ 停止" : (rh ? "🥁 開始" : "🔍 探す"));
+        if (rangeBtn != null) rangeBtn.setText(rh ? "🎯 位置" : "🔲 範囲");
+        if (rh && state == SCAN) t = "🥁 音ゲー中";
         setText(t, s);
     }
 
@@ -910,6 +931,8 @@ public class ClickerService extends AccessibilityService {
 
         TextView guide = label(rangeMode
                         ? "探す範囲を、指でなぞって四角く囲んでください"
+                        : rhythm()
+                        ? "音符を1つ、指でなぞって囲み、下の種類のボタンを押してください\n（大音符・風船も別に登録すると確実です）"
                         : "登録する画像（モンスターなど）を指でなぞって囲んでください\n周りに少し余白をつけるのがコツです",
                 14, Color.WHITE);
         guide.setBackgroundColor(0xCC000000);
@@ -931,20 +954,36 @@ public class ClickerService extends AccessibilityService {
                 closeCrop(prevState);
             }), weightLp(44));
         }
-        bar.addView(smallBtn(rangeMode ? "この範囲にする" : "登録する", v -> {
-            int[] r = cv.selection();
-            if (r == null) {
-                toast("先に指でなぞって囲んでください");
-                return;
+        if (!rangeMode && rhythm()) {
+            // 音ゲーモード：種類のボタンを押して登録
+            for (int i = 1; i < TemplateStore.KINDS.length; i++) {
+                final String kind = TemplateStore.KINDS[i];
+                String label = i == 1 ? "🔴 ドン" : i == 2 ? "🔵 カッ" : "🟡 連打";
+                bar.addView(smallBtn(label, v -> {
+                    int[] r = cv.selection();
+                    if (r == null) {
+                        toast("先に音符を指でなぞって囲んでください");
+                        return;
+                    }
+                    if (registerTemplate(shot, r, kind)) closeCrop(prevState);
+                }), weightLp(44));
             }
-            if (rangeMode) {
-                prefs().edit().putString("roi", r[0] + "," + r[1] + "," + r[2] + "," + r[3]).apply();
-                toast("探す範囲を設定しました");
-            } else if (!registerTemplate(shot, r)) {
-                return;
-            }
-            closeCrop(prevState);
-        }), weightLp(44));
+        } else {
+            bar.addView(smallBtn(rangeMode ? "この範囲にする" : "登録する", v -> {
+                int[] r = cv.selection();
+                if (r == null) {
+                    toast("先に指でなぞって囲んでください");
+                    return;
+                }
+                if (rangeMode) {
+                    prefs().edit().putString("roi", r[0] + "," + r[1] + "," + r[2] + "," + r[3]).apply();
+                    toast("探す範囲を設定しました");
+                } else if (!registerTemplate(shot, r, "normal")) {
+                    return;
+                }
+                closeCrop(prevState);
+            }), weightLp(44));
+        }
         FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
         blp.bottomMargin = dp(48);
@@ -967,7 +1006,7 @@ public class ClickerService extends AccessibilityService {
         render();
     }
 
-    private boolean registerTemplate(Shot shot, int[] r) {
+    private boolean registerTemplate(Shot shot, int[] r, String kind) {
         // 画面を縮小するときの区切りとそろえる（ずれると少し見つけにくくなる）
         int f = Frame.workFactor(shot.w, shot.h);
         int x0 = r[0] - r[0] % f, y0 = r[1] - r[1] % f;
@@ -978,13 +1017,13 @@ public class ClickerService extends AccessibilityService {
         }
         int[] crop = new int[w * h];
         for (int y = 0; y < h; y++) System.arraycopy(shot.argb, (y0 + y) * shot.w + x0, crop, y * w, w);
-        ImageMatcher.Template t = ImageMatcher.Template.create(crop, w, h, f, true);
+        ImageMatcher.Template t = ImageMatcher.Template.create(crop, w, h, f, !"roll".equals(kind));
         if (!t.usable()) {
             toast("模様が少なすぎて見分けられません。形がわかるように囲んでください");
             return false;
         }
         Bitmap bmp = Bitmap.createBitmap(crop, w, h, Bitmap.Config.ARGB_8888);
-        String name = TemplateStore.add(this, bmp);
+        String name = TemplateStore.add(this, bmp, kind);
         if (name == null) {
             toast("保存に失敗しました");
             return false;
@@ -1087,6 +1126,19 @@ public class ClickerService extends AccessibilityService {
             toast("先に「📷 登録」で画像を登録してください（アプリの一覧で「使う」がオンか確認）");
             return;
         }
+        if (rhythm()) {
+            SharedPreferences sp = prefs();
+            if (sp.getInt("judgeX", -1) < 0 || sp.getInt("donX", -1) < 0 || sp.getInt("kaX", -1) < 0) {
+                toast("先に「🎯 位置」で、判定の丸・ドン・カッの場所を決めてください");
+                return;
+            }
+            boolean any = false;
+            for (TemplateStore.Tpl t : enabledTemplates()) if (!"normal".equals(t.kind)) any = true;
+            if (!any) {
+                toast("「📷 登録」で音符を囲んで、ドン・カッ・連打として登録してください");
+                return;
+            }
+        }
         boolean fast = prefs().getBoolean("fast", true);
         CaptureService cs = CaptureService.instance;
         Log.i(TAG, "requestScan fast=" + fast + " capture=" + (cs != null && cs.alive()));
@@ -1172,7 +1224,8 @@ public class ClickerService extends AccessibilityService {
         render();
         Log.i(TAG, "startScan fast=" + src.fast() + " templates=" + list.size());
         final Frame.Source s0 = src;
-        new Thread(() -> scanLoop(list, s0), "ac-scan").start();
+        if (rhythm()) new Thread(() -> rhythmLoop(list, s0), "ac-rhythm").start();
+        else new Thread(() -> scanLoop(list, s0), "ac-scan").start();
     }
 
     private static int[] parseRoi(String s) {
@@ -1254,7 +1307,7 @@ public class ClickerService extends AccessibilityService {
                                     ? ImageMatcher.findMultiScale(pyr, t, roi, thr, 20, SCALES)
                                     : ImageMatcher.find(pyr, t, roi, thr, 20);
                             for (ImageMatcher.Match m : ms) {
-                                float cx = (m.x + m.w / 2f) * fr.sx, cy = (m.y + m.h / 2f) * fr.sy;
+                                float cx = (m.x + m.t.cx) * fr.sx, cy = (m.y + m.t.cy) * fr.sy;
                                 // パネルの上はタップしない
                                 if (cx >= pr[0] - margin && cx <= pr[2] + margin && cy >= pr[1] - margin && cy <= pr[3] + margin) continue;
                                 if (colorCk && m.colorDiff(fr.argb, fr.w, fr.h) > COLOR_TOL) continue;
@@ -1352,6 +1405,371 @@ public class ClickerService extends AccessibilityService {
             render();
             setText(e != null ? e : "探索を止めました", "タップ " + tc + "回");
         });
+    }
+
+    // =====================================================================
+    // 音ゲーモード（太鼓）
+    // =====================================================================
+
+    private static int kindCode(String k) {
+        switch (k) {
+            case "don": return RhythmPlanner.DON;
+            case "ka": return RhythmPlanner.KA;
+            case "roll": return RhythmPlanner.ROLL;
+            default: return 0;
+        }
+    }
+
+    private void rhythmLoop(List<TemplateStore.Tpl> all, Frame.Source src) {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
+        SharedPreferences sp = prefs();
+        final float thr = sp.getInt("thr", 80) / 100f;
+        final int offset = sp.getInt("rOffset", 0);
+        final int rollMs = Math.max(30, Math.min(200, sp.getInt("rollMs", 60)));
+        final int tapMs = Math.max(10, Math.min(300, sp.getInt("tapMs", 40)));
+        final float jx = sp.getInt("judgeX", 0), jy = sp.getInt("judgeY", 0);
+        final float donX = sp.getInt("donX", 0), donY = sp.getInt("donY", 0);
+        final float kaX = sp.getInt("kaX", 0), kaY = sp.getInt("kaY", 0);
+        final int[] roiScreen = parseRoi(sp.getString("roi", ""));
+
+        List<TemplateStore.Tpl> list = new ArrayList<>();
+        for (TemplateStore.Tpl t : all) if (kindCode(t.kind) != 0) list.add(t);
+
+        RhythmPlanner pl = new RhythmPlanner(jx, jy);
+        ImageMatcher.Pyramid pyr = new ImageMatcher.Pyramid();
+        long lastSeq = -1, lastUi = 0, lastLog = 0, lastFreshAt = 0;
+        float fps = 0, arrOff = -1;
+        int empty = 0, sent = 0;
+        String err = null;
+        long injLat = calibrateInjection();
+        long capLat = src.fast() ? calibrateCapture(src) : -1;
+        Log.i(TAG, "rhythm start injLat=" + injLat + " capLat=" + capLat + " templates=" + list.size()
+                + " judge=" + jx + "," + jy);
+        try {
+            while (!abort) {
+                if (!src.alive()) {
+                    src.close();
+                    if (Build.VERSION.SDK_INT >= 30 && src.fast()) {
+                        src = new ShotSource();
+                        toast("画面共有が終わったので通常モードで続けます（遅くなります）");
+                        lastSeq = -1;
+                        continue;
+                    }
+                    err = "画面を読み取れません";
+                    break;
+                }
+                Frame fr = src.acquire(lastSeq, src.fast() ? 60 : 200);
+                if (abort) {
+                    if (fr != null) src.release(fr);
+                    break;
+                }
+                if (fr == null) {
+                    if (++empty > 80) { err = "画面を読み取れません"; break; }
+                    continue;
+                }
+                empty = 0;
+                boolean fresh = fr.seq != lastSeq;
+                lastSeq = fr.seq;
+                try {
+                    if (fresh) {
+                        pyr.build(fr.argb, fr.w, fr.h);
+                        // 探す範囲：指定がなければ、判定の丸の高さの横長の帯
+                        int maxH = 0;
+                        for (TemplateStore.Tpl tp : list) {
+                            ImageMatcher.Template t = tp.template(fr.f);
+                            if (t != null) maxH = Math.max(maxH, t.gray.h);
+                        }
+                        int[] roi;
+                        if (roiScreen != null) {
+                            roi = new int[]{(int) (roiScreen[0] / fr.sx), (int) (roiScreen[1] / fr.sy),
+                                    (int) Math.ceil(roiScreen[2] / fr.sx), (int) Math.ceil(roiScreen[3] / fr.sy)};
+                        } else {
+                            int cyw = (int) (jy / fr.sy), band = (int) (maxH * 0.8f) + 6;
+                            roi = new int[]{0, cyw - band, fr.w, cyw + band};
+                        }
+                        List<RhythmPlanner.Note> notes = new ArrayList<>();
+                        List<Float> scores = new ArrayList<>();
+                        for (TemplateStore.Tpl tp : list) {
+                            ImageMatcher.Template t = tp.template(fr.f);
+                            if (t == null) continue;
+                            int kind = kindCode(tp.kind);
+                            for (ImageMatcher.Match m : ImageMatcher.find(pyr, t, roi, thr, 40)) {
+                                if (m.colorDiff(fr.argb, fr.w, fr.h) > COLOR_TOL) continue;
+                                float x = (m.x + t.cx) * fr.sx, y = (m.y + t.cy) * fr.sy;
+                                float size = Math.min(m.w * fr.sx, m.h * fr.sy) * 0.8f;
+                                // 違う登録画像が同じ音符を見つけたときは、似ている方だけ残す
+                                boolean keep = true;
+                                for (int i = 0; i < notes.size(); i++) {
+                                    RhythmPlanner.Note o = notes.get(i);
+                                    if (Math.hypot(o.x - x, o.y - y) < Math.min(o.size, size) * 0.45f) {
+                                        if (scores.get(i) >= m.score) keep = false;
+                                        else { notes.remove(i); scores.remove(i); i--; }
+                                    }
+                                }
+                                if (keep) {
+                                    notes.add(new RhythmPlanner.Note(kind, x, y, size));
+                                    scores.add(m.score);
+                                }
+                            }
+                        }
+                        // 連打・風船：判定の丸に色があるか、そこから後ろへどれだけ続くか
+                        boolean rollAt = false;
+                        float tail = -1;
+                        for (TemplateStore.Tpl tp : list) {
+                            if (!"roll".equals(tp.kind)) continue;
+                            ImageMatcher.Template t = tp.template(fr.f);
+                            if (t == null) continue;
+                            int px = (int) (jx / fr.sx), py = (int) (jy / fr.sy);
+                            if (patchDist(fr, px, py, t.color) < 50) {
+                                rollAt = true;
+                                double sp2 = pl.speed();
+                                if (sp2 > 1e-3) {
+                                    double ux = -pl.vx() / sp2, uy = -pl.vy() / sp2;
+                                    int gap = 0, lastHit = 0;
+                                    for (int k = 1; k < 500; k++) {
+                                        int qx = (int) Math.round(px + ux * k * 2), qy = (int) Math.round(py + uy * k * 2);
+                                        if (qx < 1 || qy < 1 || qx >= fr.w - 1 || qy >= fr.h - 1) break;
+                                        if (patchDist(fr, qx, qy, t.color) < 50) { lastHit = k; gap = 0; }
+                                        else if (++gap > 4) break;
+                                    }
+                                    tail = Math.max(tail, (float) (lastHit * 2 * fr.sx));
+                                }
+                            }
+                        }
+                        long game;
+                        if (src.fast()) {
+                            float off = fr.arrMs - fr.tsMs;
+                            arrOff = arrOff < 0 ? off : arrOff * 0.9f + off * 0.1f;
+                            long cap = capLat > 0 ? capLat : (long) (arrOff + 16);
+                            game = fr.tsMs - Math.max(0, cap - (long) arrOff);
+                        } else {
+                            game = fr.tsMs - 8;
+                        }
+                        pl.update(notes, game, rollAt, tail);
+                        long now = Frame.nowMs();
+                        if (lastFreshAt > 0) {
+                            float inst = 1000f / Math.max(1, now - lastFreshAt);
+                            fps = fps == 0 ? inst : fps * 0.85f + inst * 0.15f;
+                        }
+                        lastFreshAt = now;
+                    }
+                } finally {
+                    src.release(fr);
+                }
+
+                // 少し先までのタップをまとめて送る（時刻はシステムが正確に守る）
+                if (gestureFree()) {
+                    long now = Frame.nowMs();
+                    List<RhythmPlanner.Tap> taps = pl.plan(now + injLat, 450, offset, rollMs);
+                    if (!taps.isEmpty()) {
+                        GestureDescription.Builder b = new GestureDescription.Builder();
+                        long len = 0;
+                        int n = 0;
+                        for (int i = 0; i < taps.size() && n < 20; i++) {
+                            RhythmPlanner.Tap tp = taps.get(i);
+                            boolean ka = tp.kind == RhythmPlanner.KA;
+                            float x = ka ? kaX : donX, y = ka ? kaY : donY;
+                            long start = Math.max(0, tp.at - injLat - now);
+                            long dur = tapMs;
+                            // 同じ場所を続けて叩くときは、次のタップの前に指を離す
+                            for (int j = i + 1; j < taps.size(); j++) {
+                                if ((taps.get(j).kind == RhythmPlanner.KA) == ka) {
+                                    long ns = Math.max(0, taps.get(j).at - injLat - now);
+                                    dur = Math.min(dur, ns - start - 6);
+                                    break;
+                                }
+                            }
+                            if (dur < 8) continue;
+                            Path path = new Path();
+                            path.moveTo(x, y);
+                            b.addStroke(new GestureDescription.StrokeDescription(path, start, dur));
+                            len = Math.max(len, start + dur);
+                            n++;
+                        }
+                        if (n > 0 && send(b.build(), len, null)) sent += n;
+                    }
+                }
+
+                long now = Frame.nowMs();
+                if (now - lastUi > 300) {
+                    lastUi = now;
+                    final String title = "🥁 音ゲー中 " + sent + "打";
+                    final String sub = String.format(Locale.US, "ドン%d・カッ%d・連打%d %s%.0f回/秒",
+                            pl.dons, pl.kas, pl.rollTaps, src.fast() ? "⚡" : "", fps);
+                    stats = String.format(Locale.US, "rhythm fps=%.1f speed=%.3f don=%d ka=%d roll=%d sent=%d tracked=%d inj=%d cap=%d",
+                            fps, pl.speed(), pl.dons, pl.kas, pl.rollTaps, sent, pl.tracked(), injLat, capLat);
+                    ui.post(() -> { if (state == SCAN) setText(title, sub); });
+                }
+                if (now - lastLog > 2000) {
+                    lastLog = now;
+                    Log.i(TAG, "scan " + stats);
+                }
+            }
+        } catch (InterruptedException ignored) {
+        } catch (Throwable e) {
+            Log.e(TAG, "rhythm error", e);
+            err = "エラーで止まりました";
+        } finally {
+            src.close();
+        }
+        final String e = err;
+        final int sc = sent;
+        Log.i(TAG, "scan end " + stats);
+        ui.post(() -> {
+            state = actions.isEmpty() ? IDLE : READY;
+            render();
+            setText(e != null ? e : "音ゲーモードを止めました", sc + "回たたきました");
+        });
+    }
+
+    /** (x, y) のまわり 3×3 の平均色と、色 c との違い */
+    private static float patchDist(Frame fr, int x, int y, float[] c) {
+        int r = 0, g = 0, b = 0, n = 0;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                int xx = x + dx, yy = y + dy;
+                if (xx < 0 || yy < 0 || xx >= fr.w || yy >= fr.h) continue;
+                int p = fr.argb[yy * fr.w + xx];
+                r += (p >> 16) & 255; g += (p >> 8) & 255; b += p & 255;
+                n++;
+            }
+        if (n == 0) return 999f;
+        float dr = r / (float) n - c[0], dg = g / (float) n - c[1], db = b / (float) n - c[2];
+        return (float) Math.sqrt(dr * dr + dg * dg + db * db);
+    }
+
+    // ---------- 🎯 位置（判定の丸・ドン・カッの場所）を決める ----------
+
+    private FrameLayout posRoot;
+
+    private void startPositionSetup() {
+        if (state != IDLE && state != READY) {
+            toast("記録・再生・音ゲーを止めてから押してください");
+            return;
+        }
+        final int prev = state;
+        state = BUSY;
+        render();
+        panel.setVisibility(View.INVISIBLE);
+        posRoot = new FrameLayout(this);
+        final TextView guide = label("", 15, Color.WHITE);
+        guide.setBackgroundColor(0xCC000000);
+        guide.setPadding(dp(12), dp(10), dp(12), dp(10));
+        final PosView pv = new PosView(this, dp(26), dp(3), dp(14));
+        final Runnable updateGuide = () -> {
+            int n = pv.count();
+            guide.setText(n == 0 ? "① 判定の丸（音符をたたく場所）の真ん中をタップ"
+                    : n == 1 ? "② ドンのときに押す場所（白い所）をタップ"
+                    : n == 2 ? "③ カッのときに押す場所（青い所）をタップ"
+                    : "「保存」を押してください（やり直すなら「やり直し」）");
+        };
+        pv.onChange = updateGuide;
+        posRoot.addView(pv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        FrameLayout.LayoutParams glp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
+        glp.topMargin = dp(40);
+        posRoot.addView(guide, glp);
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setPadding(dp(8), dp(8), dp(8), dp(8));
+        bar.setBackgroundColor(0xCC000000);
+        bar.addView(smallBtn("キャンセル", v -> closePos(prev)), weightLp(44));
+        bar.addView(smallBtn("やり直し", v -> pv.clear()), weightLp(44));
+        bar.addView(smallBtn("保存", v -> {
+            float[][] p = pv.points();
+            if (p.length < 3) {
+                toast("3か所をタップしてください");
+                return;
+            }
+            prefs().edit()
+                    .putInt("judgeX", Math.round(p[0][0])).putInt("judgeY", Math.round(p[0][1]))
+                    .putInt("donX", Math.round(p[1][0])).putInt("donY", Math.round(p[1][1]))
+                    .putInt("kaX", Math.round(p[2][0])).putInt("kaY", Math.round(p[2][1]))
+                    .apply();
+            int[] pr = panelRect;
+            for (int i = 1; i < 3; i++) {
+                if (p[i][0] >= pr[0] && p[i][0] <= pr[2] && p[i][1] >= pr[1] && p[i][1] <= pr[3]) {
+                    toast("ドン・カッの場所がパネルと重なっています。パネルを動かしてください");
+                }
+            }
+            toast("判定の丸・ドン・カッの場所を保存しました");
+            closePos(prev);
+        }), weightLp(44));
+        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
+        blp.bottomMargin = dp(48);
+        posRoot.addView(bar, blp);
+        updateGuide.run();
+        wm.addView(posRoot, baseLp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, FULL_FLAGS));
+    }
+
+    private void closePos(int prevState) {
+        if (posRoot != null) {
+            try { wm.removeView(posRoot); } catch (Exception ignored) { }
+            posRoot = null;
+        }
+        state = prevState;
+        if (panel != null) panel.setVisibility(View.VISIBLE);
+        render();
+    }
+
+    /** 判定の丸・ドン・カッの場所をタップで決めるビュー（下のゲームが透けて見える） */
+    private static final class PosView extends View {
+        private final List<float[]> pts = new ArrayList<>();
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG),
+                text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final int r;
+        private final int[] loc = new int[2];
+        Runnable onChange;
+
+        PosView(Context c, int radius, int stroke, int textPx) {
+            super(c);
+            r = radius;
+            ring.setStyle(Paint.Style.STROKE);
+            ring.setStrokeWidth(stroke);
+            text.setColor(Color.WHITE);
+            text.setTextSize(textPx);
+            text.setTextAlign(Paint.Align.CENTER);
+            text.setFakeBoldText(true);
+            setBackgroundColor(0x44000000);
+        }
+
+        int count() { return pts.size(); }
+
+        float[][] points() { return pts.toArray(new float[0][]); }
+
+        void clear() {
+            pts.clear();
+            invalidate();
+            if (onChange != null) onChange.run();
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent e) {
+            if (e.getActionMasked() == MotionEvent.ACTION_UP && pts.size() < 3) {
+                pts.add(new float[]{e.getRawX(), e.getRawY()});
+                invalidate();
+                if (onChange != null) onChange.run();
+            }
+            return true;
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            getLocationOnScreen(loc);
+            String[] names = {"判定", "ドン", "カッ"};
+            int[] colors = {0xFFFFD54F, 0xFFFF5A3C, 0xFF3CC8E6};
+            for (int i = 0; i < pts.size(); i++) {
+                float x = pts.get(i)[0] - loc[0], y = pts.get(i)[1] - loc[1];
+                fill.setColor((colors[i] & 0x00FFFFFF) | 0x66000000);
+                ring.setColor(colors[i]);
+                c.drawCircle(x, y, r, fill);
+                c.drawCircle(x, y, r, ring);
+                c.drawText(names[i], x, y - r - text.getTextSize() * 0.4f, text);
+            }
+        }
     }
 
     /** 画面のスレッドで値を作って受け取る */
