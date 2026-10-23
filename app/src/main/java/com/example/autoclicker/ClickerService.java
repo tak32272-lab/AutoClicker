@@ -17,9 +17,12 @@ import android.graphics.drawable.GradientDrawable;
 import android.hardware.HardwareBuffer;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.Process;
 import android.os.SystemClock;
 import android.text.TextUtils;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Display;
 import android.view.Gravity;
@@ -36,36 +39,51 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * ユーザー補助サービス本体。
  * ・画面の上に⏯️パネルを出す
  * ・記録：透明な膜で画面全体のタッチを拾い、座標を記録してから下のアプリへ同じ操作を流す
- * ・再生：記録した操作を dispatchGesture で再現する
- * ・画像探索：スクリーンショットから登録画像を探し、見つけたらタップする（Android 11 以上）
+ * ・再生：記録した操作をまとめて dispatchGesture で再現する（時刻はシステムが正確に守る）
+ * ・画像探索：画面から登録画像を探し、見つけたらタップする
+ *   高速モード：画面共有で 1 秒に数十回確認（CaptureService）
+ *   通常モード：ユーザー補助のスクリーンショットで約 0.34 秒に 1 回（Android 11 以上）
  */
 public class ClickerService extends AccessibilityService {
 
-    static ClickerService instance;
+    static final String TAG = "AC";
+    static volatile ClickerService instance;
 
-    private static final int IDLE = 0, REC = 1, READY = 2, PLAY = 3, SCAN = 4, BUSY = 5;
-    private int state = IDLE;
+    private static final int IDLE = 0, REC = 1, READY = 2, PLAY = 3, SCAN = 4, BUSY = 5, WAIT = 6;
+    private volatile int state = IDLE;
 
     /** 色の違いがこれより大きければ「別物」とする */
     private static final float COLOR_TOL = 60f;
     /** 大きさの変化に対応するときに試す倍率 */
     private static final float[] SCALES = {0.8f, 1f, 1.25f};
-    /** スクリーンショットの間隔（Android の制限で約0.33秒に1回まで） */
-    private static final long SHOT_INTERVAL = 360;
+    /** 通常モードのスクリーンショットの間隔（Android の制限で約0.33秒に1回まで） */
+    private static final long SHOT_INTERVAL = 340;
+    /** 続けてタップするときの、指を離してから次に触るまでの間（ms） */
+    private static final int TAP_GAP = 10;
+    /** タップがゲームに届くまで＋画面に出るまでの遅れの見込み（ms）。動く敵の予測に使う */
+    private static final float EXTRA_LATENCY = 30f;
+    /** 記録中、膜をすり抜けにしてからタップを流すまでの待ち（ms） */
+    private static final long PASS_DELAY = 34;
 
     private WindowManager wm;
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private HandlerThread tapThread;
+    private Handler tapH;
     private final ExecutorService shotExec = Executors.newSingleThreadExecutor();
 
     private LinearLayout panel;
@@ -75,10 +93,11 @@ public class ClickerService extends AccessibilityService {
 
     private View recLayer;
     private WindowManager.LayoutParams recLp;
-    private boolean passing = false;
+    private boolean passing = false, passSelfHit = false;
+    private long passAt;
+    private Action passAction;
 
     private FrameLayout cropRoot;
-    private int[] shotBuf;
 
     private final List<Action> actions = new ArrayList<>();
     private long recStart, recDuration;
@@ -86,6 +105,7 @@ public class ClickerService extends AccessibilityService {
     private long curDown;
 
     private volatile boolean abort = false;
+    private volatile String stats = "";
 
     static class Action {
         long t;     // 記録開始からの時間(ms)
@@ -102,6 +122,9 @@ public class ClickerService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        tapThread = new HandlerThread("ac-tap", Process.THREAD_PRIORITY_URGENT_DISPLAY);
+        tapThread.start();
+        tapH = new Handler(tapThread.getLooper());
         load();
         state = actions.isEmpty() ? IDLE : READY;
         showPanel();
@@ -130,7 +153,9 @@ public class ClickerService extends AccessibilityService {
             try { wm.removeView(panel); } catch (Exception ignored) { }
             panel = null;
         }
+        stopCapture();
         shotExec.shutdownNow();
+        if (tapThread != null) tapThread.quitSafely();
         instance = null;
     }
 
@@ -188,10 +213,6 @@ public class ClickerService extends AccessibilityService {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(hDp), 1f);
         lp.setMargins(dp(2), 0, dp(2), 0);
         return lp;
-    }
-
-    private static int workFactor(int screenW) {
-        return Math.max(1, Math.round(screenW / 360f));
     }
 
     // =====================================================================
@@ -309,11 +330,14 @@ public class ClickerService extends AccessibilityService {
     private void hidePanel() {
         abort = true;
         if (state == REC) stopRec();
+        if (state == WAIT) state = actions.isEmpty() ? IDLE : READY;
         removeCrop();
         if (panel != null) {
             try { wm.removeView(panel); } catch (Exception ignored) { }
             panel = null;
         }
+        panelRect = new int[]{0, 0, 0, 0};
+        stopCapture();
         Toast.makeText(this, "パネルはアプリの「パネルを表示」で戻せます", Toast.LENGTH_SHORT).show();
     }
 
@@ -330,6 +354,7 @@ public class ClickerService extends AccessibilityService {
             case READY: color = 0xFF2F9CFF; t = "記録 " + actions.size() + "タップ"; s = "⏯️で再生 " + cfg; break;
             case PLAY:  color = 0xFF2FD17A; t = "▶ 再生中"; s = "⏯️で中断"; break;
             case SCAN:  color = 0xFF9B59F6; t = "🔍 探索中"; s = "⏯️か⏹で停止"; break;
+            case WAIT:  color = 0xFF9B59F6; t = "画面共有の確認中"; s = "「今すぐ開始」を押してください"; break;
             case BUSY:  color = 0xFF3A4553; t = "範囲を選択中"; s = ""; break;
             default:    color = 0xFF3A4553; t = "待機中"; s = "⏯️で記録開始"; break;
         }
@@ -337,7 +362,7 @@ public class ClickerService extends AccessibilityService {
         c.setShape(GradientDrawable.OVAL);
         c.setColor(color);
         mainBtn.setBackground(c);
-        scanBtn.setText(state == SCAN ? "⏹ 停止" : "🔍 探す");
+        scanBtn.setText(state == SCAN || state == WAIT ? "⏹ 停止" : "🔍 探す");
         setText(t, s);
     }
 
@@ -353,15 +378,22 @@ public class ClickerService extends AccessibilityService {
             case REC:   stopRec(); break;
             case READY: startPlay(); break;
             case PLAY:
-            case SCAN:  abort = true; break;
+            case SCAN:  stopRunning(); break;
+            case WAIT:  cancelWait(); break;
             default:    break;
         }
     }
 
+    /** 再生・探索を止める */
+    private void stopRunning() {
+        abort = true;
+        if (state == PLAY) cancelGesture();
+    }
+
     /** 記録したタップを消す */
     private void clearAll() {
-        if (state == SCAN || state == BUSY) {
-            toast("探索を止めてから押してください");
+        if (state == SCAN || state == BUSY || state == WAIT || state == PLAY) {
+            toast("再生・探索を止めてから押してください");
             return;
         }
         abort = true;
@@ -371,6 +403,91 @@ public class ClickerService extends AccessibilityService {
         state = IDLE;
         save();
         render();
+    }
+
+    // =====================================================================
+    // ジェスチャー（タップ）を送る
+    // =====================================================================
+
+    private final AtomicBoolean gestureBusy = new AtomicBoolean(false);
+    private volatile long gestureDeadline;
+
+    /** いまジェスチャーを送れるか（前のものが終わっているか） */
+    private boolean gestureFree() {
+        if (gestureBusy.get() && Frame.nowMs() > gestureDeadline) gestureBusy.set(false);   // 念のため
+        return !gestureBusy.get();
+    }
+
+    /**
+     * ジェスチャーを送る。前のものがまだ動いていれば送らずに false
+     * （送ると前のタップが途中で取り消され、ゲームに届かないことがあるため）。
+     * @param lengthMs ジェスチャー全体の長さ
+     * @param done     終わったとき（取り消されたときも）に呼ぶ。null 可
+     */
+    private boolean send(GestureDescription g, long lengthMs, final Runnable done) {
+        if (!gestureFree() || !gestureBusy.compareAndSet(false, true)) return false;
+        gestureDeadline = Frame.nowMs() + lengthMs + 1500;
+        boolean ok;
+        try {
+            ok = dispatchGesture(g, new GestureResultCallback() {
+                @Override public void onCompleted(GestureDescription d) { finish(); }
+                @Override public void onCancelled(GestureDescription d) { finish(); }
+
+                private void finish() {
+                    gestureBusy.set(false);
+                    if (done != null) done.run();
+                }
+            }, tapH);
+        } catch (Throwable e) {
+            Log.w(TAG, "dispatchGesture failed", e);
+            ok = false;
+        }
+        if (!ok) gestureBusy.set(false);
+        return ok;
+    }
+
+    /** 送ったジェスチャーが終わるまで待つ（メインスレッド以外から呼ぶ）。中断されたら false */
+    private boolean sendAndWait(GestureDescription g, long lengthMs) {
+        long until = Frame.nowMs() + 3000;
+        while (!gestureFree()) {
+            if (abort || Frame.nowMs() > until) return false;
+            SystemClock.sleep(2);
+        }
+        final CountDownLatch latch = new CountDownLatch(1);
+        if (!send(g, lengthMs, latch::countDown)) return false;
+        try {
+            while (!latch.await(20, TimeUnit.MILLISECONDS)) {
+                if (abort) {
+                    cancelGesture();
+                    return false;
+                }
+            }
+        } catch (InterruptedException e) {
+            return false;
+        }
+        return true;
+    }
+
+    /** 動いているジェスチャーを止める（パネルの文字の部分を一瞬だけ触る。そこを触っても何も起きない） */
+    private void cancelGesture() {
+        ui.post(() -> {
+            if (titleTv == null || panel == null || !titleTv.isShown()) return;
+            int[] loc = new int[2];
+            titleTv.getLocationOnScreen(loc);
+            Path p = new Path();
+            p.moveTo(loc[0] + titleTv.getWidth() / 2f, loc[1] + titleTv.getHeight() / 2f);
+            try {
+                dispatchGesture(new GestureDescription.Builder()
+                        .addStroke(new GestureDescription.StrokeDescription(p, 0, 1)).build(), null, null);
+            } catch (Throwable ignored) { }
+        });
+    }
+
+    private static Path pathOf(Action a) {
+        Path p = new Path();
+        p.moveTo(a.xs[0], a.ys[0]);
+        for (int i = 1; i < a.xs.length; i++) p.lineTo(a.xs[i], a.ys[i]);
+        return p;
     }
 
     // =====================================================================
@@ -401,9 +518,18 @@ public class ClickerService extends AccessibilityService {
     }
 
     private void onRecTouch(MotionEvent e) {
-        if (passing) return;
         float x = Math.max(0, e.getRawX());
         float y = Math.max(0, e.getRawY());
+        if (passing) {
+            // 流したタップが、まだすり抜けになっていない膜に当たってしまった → あとで流し直す
+            Action a = passAction;
+            if (e.getActionMasked() == MotionEvent.ACTION_DOWN && a != null
+                    && Math.abs(x - a.xs[0]) < 4 && Math.abs(y - a.ys[0]) < 4
+                    && Frame.nowMs() - passAt < 600) {
+                passSelfHit = true;
+            }
+            return;
+        }
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 curPts = new ArrayList<>();
@@ -435,6 +561,7 @@ public class ClickerService extends AccessibilityService {
                 }
                 curPts = null;
                 actions.add(a);
+                Log.i(TAG, "rec action t=" + a.t + " dur=" + a.dur + " up=" + e.getEventTime() + " pts=" + a.xs.length);
                 render();
                 passThrough(a);
                 break;
@@ -446,32 +573,52 @@ public class ClickerService extends AccessibilityService {
     }
 
     /** 記録したタップを、膜を一瞬すり抜けさせて下のアプリにも届ける */
-    private void passThrough(Action a) {
+    private void passThrough(final Action a) {
         passing = true;
+        passSelfHit = false;
+        passAction = a;
         recLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         try { wm.updateViewLayout(recLayer, recLp); } catch (Exception ignored) { }
-        ui.postDelayed(() -> {
-            boolean ok = dispatchGesture(build(a, 1f), new GestureResultCallback() {
-                @Override public void onCompleted(GestureDescription g) { endPass(); }
-                @Override public void onCancelled(GestureDescription g) { endPass(); }
-            }, ui);
-            if (!ok) endPass();
-        }, 60);
+        ui.postDelayed(() -> dispatchPass(a, false), PASS_DELAY);
+    }
+
+    private void dispatchPass(final Action a, final boolean retry) {
+        if (recLayer == null || state != REC) {
+            endPass();
+            return;
+        }
+        // タップはゲームに届けば十分なので短く流す（すり抜けの時間を短くして、次のタップを記録しやすくする）
+        long d = a.xs.length == 1 ? Math.min(a.dur, 40) : Math.min(a.dur, 3000);
+        d = Math.max(10, d);
+        GestureDescription g = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(pathOf(a), 0, d)).build();
+        passAt = Frame.nowMs();
+        Log.i(TAG, "pass dispatch at=" + SystemClock.uptimeMillis() + (retry ? " retry" : ""));
+        boolean ok = send(g, d, () -> ui.post(() -> {
+            if (passSelfHit && !retry) {
+                Log.i(TAG, "pass self-hit, retry");
+                passSelfHit = false;
+                ui.postDelayed(() -> dispatchPass(a, true), 40);
+                return;
+            }
+            endPass();
+        }));
+        if (!ok) endPass();
     }
 
     private void endPass() {
-        ui.postDelayed(() -> {
-            passing = false;
-            if (recLayer != null && state == REC) {
-                recLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                try { wm.updateViewLayout(recLayer, recLp); } catch (Exception ignored) { }
-            }
-        }, 30);
+        passing = false;
+        passAction = null;
+        if (recLayer != null && state == REC) {
+            recLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            try { wm.updateViewLayout(recLayer, recLp); } catch (Exception ignored) { }
+        }
     }
 
     private void stopRec() {
         recDuration = SystemClock.uptimeMillis() - recStart;
         removeRecLayer();
+        passing = false;
         state = actions.isEmpty() ? IDLE : READY;
         save();
         render();
@@ -488,16 +635,8 @@ public class ClickerService extends AccessibilityService {
     // 再生
     // =====================================================================
 
-    private GestureDescription build(Action a, float mult) {
-        Path p = new Path();
-        p.moveTo(a.xs[0], a.ys[0]);
-        for (int i = 1; i < a.xs.length; i++) p.lineTo(a.xs[i], a.ys[i]);
-        long d = Math.round(a.dur / mult);
-        d = Math.max(10, Math.min(GestureDescription.getMaxGestureDuration(), d));
-        return new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(p, 0, d))
-                .build();
-    }
+    /** 1回のジェスチャーにまとめる操作の最大数と長さ */
+    private static final long BATCH_SPAN = 4000;
 
     private void startPlay() {
         if (actions.isEmpty()) return;
@@ -505,25 +644,50 @@ public class ClickerService extends AccessibilityService {
         final int n = Math.max(1, sp.getInt("count", 100));
         final float mult = Math.max(1, Math.min(100, sp.getInt("speed", 10))) / 10f;  // 10で等速
         final List<Action> list = new ArrayList<>(actions);
-        final long total = recDuration;
+        final long total = Math.max(recDuration, list.get(list.size() - 1).t + list.get(list.size() - 1).dur);
+        final int maxStrokes = Math.max(1, Math.min(20, GestureDescription.getMaxStrokeCount()));
 
         abort = false;
         state = PLAY;
         render();
 
         new Thread(() -> {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
             boolean done = true;
+            long base = Frame.nowMs() + 30;
             outer:
-            for (int k = 1; k <= n; k++) {
-                final int kk = k;
+            for (int k = 0; k < n; k++) {
+                final int kk = k + 1;
                 ui.post(() -> setText("▶ 再生中 " + kk + "/" + n, "⏯️で中断"));
-                long prevEnd = 0;
-                for (Action a : list) {
-                    if (!sleepAbortable((a.t - prevEnd) / mult)) { done = false; break outer; }
-                    dispatchSync(build(a, mult));
-                    prevEnd = a.t + a.dur;
+                long loopStart = base + Math.round(k * total / mult);
+                int i = 0;
+                while (i < list.size()) {
+                    long bStart = Math.round(list.get(i).t / mult);
+                    GestureDescription.Builder b = new GestureDescription.Builder();
+                    long end = bStart;
+                    int strokes = 0, j = i;
+                    while (j < list.size() && strokes < maxStrokes) {
+                        Action a = list.get(j);
+                        long st = Math.round(a.t / mult);
+                        if (strokes > 0 && st - bStart > BATCH_SPAN) break;
+                        long du = Math.max(1, Math.round(a.dur / mult));
+                        if (j + 1 < list.size()) {
+                            // 次の操作と重ならないように（重なると同時押しになる）
+                            long next = Math.round(list.get(j + 1).t / mult);
+                            du = Math.max(1, Math.min(du, next - st - 1));
+                        }
+                        du = Math.min(du, GestureDescription.getMaxGestureDuration() - (st - bStart) - 1);
+                        b.addStroke(new GestureDescription.StrokeDescription(pathOf(a), st - bStart, du));
+                        end = Math.max(end, st + du);
+                        strokes++;
+                        j++;
+                    }
+                    if (!sleepUntil(loopStart + bStart)) { done = false; break outer; }
+                    Log.i(TAG, "play batch loop=" + kk + " from=" + i + " n=" + strokes + " late=" + (Frame.nowMs() - (loopStart + bStart)));
+                    if (!sendAndWait(b.build(), end - bStart) && abort) { done = false; break outer; }
+                    i = j;
                 }
-                if (k < n && !sleepAbortable((total - prevEnd) / mult)) { done = false; break; }
+                if (k + 1 < n && !sleepUntil(base + Math.round((k + 1) * total / mult))) { done = false; break; }
             }
             final boolean fin = done && !abort;
             ui.post(() -> {
@@ -531,40 +695,21 @@ public class ClickerService extends AccessibilityService {
                 render();
                 if (state == READY) setText(fin ? "再生完了" : "中断しました", "⏯️でもう一度再生");
             });
-        }).start();
+        }, "ac-play").start();
     }
 
-    private boolean sleepAbortable(float ms) {
-        long end = SystemClock.uptimeMillis() + Math.max(0, (long) ms);
+    /** 指定の時刻（Frame.nowMs 基準）まで待つ。中断されたら false */
+    private boolean sleepUntil(long t) {
         while (!abort) {
-            long left = end - SystemClock.uptimeMillis();
+            long left = t - Frame.nowMs();
             if (left <= 0) return true;
-            try { Thread.sleep(Math.min(left, 20)); } catch (InterruptedException ex) { return false; }
+            SystemClock.sleep(Math.min(left > 12 ? left - 8 : 1, 20));
         }
         return false;
     }
 
-    /** ジェスチャーを送り、終わるまで待つ（メインスレッド以外から呼ぶ） */
-    private void dispatchSync(final GestureDescription g) {
-        final CountDownLatch latch = new CountDownLatch(1);
-        ui.post(() -> {
-            boolean ok = dispatchGesture(g, new GestureResultCallback() {
-                @Override public void onCompleted(GestureDescription d) { latch.countDown(); }
-                @Override public void onCancelled(GestureDescription d) { latch.countDown(); }
-            }, ui);
-            if (!ok) latch.countDown();
-        });
-        try {
-            latch.await(GestureDescription.getMaxGestureDuration() + 2000, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException ignored) { }
-    }
-
-    private void tapSync(float x, float y) {
-        Path p = new Path();
-        p.moveTo(x, y);
-        dispatchSync(new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(p, 0, 50))
-                .build());
+    private boolean sleepAbortable(long ms) {
+        return sleepUntil(Frame.nowMs() + Math.max(0, ms));
     }
 
     // =====================================================================
@@ -576,16 +721,31 @@ public class ClickerService extends AccessibilityService {
         int[] argb;
     }
 
-    /** 画面を撮る（終わるまで待つ。メインスレッド以外から呼ぶ）。失敗なら null */
+    /** 画面を等倍で撮る（終わるまで待つ。メインスレッド以外から呼ぶ）。失敗なら null */
     @TargetApi(30)
-    private Shot takeShotSync(final boolean reuse) {
+    private Shot takeShotSync() {
         final Shot[] out = new Shot[1];
         final CountDownLatch latch = new CountDownLatch(1);
         try {
             takeScreenshot(Display.DEFAULT_DISPLAY, shotExec, new TakeScreenshotCallback() {
                 @Override
                 public void onSuccess(ScreenshotResult r) {
-                    try { out[0] = toShot(r, reuse); } catch (Throwable ignored) { }
+                    HardwareBuffer hb = r.getHardwareBuffer();
+                    try {
+                        Bitmap sw = softCopy(r);
+                        if (sw != null) {
+                            Shot s = new Shot();
+                            s.w = sw.getWidth();
+                            s.h = sw.getHeight();
+                            s.argb = new int[s.w * s.h];
+                            sw.getPixels(s.argb, 0, s.w, 0, 0, s.w, s.h);
+                            sw.recycle();
+                            out[0] = s;
+                        }
+                    } catch (Throwable ignored) {
+                    } finally {
+                        hb.close();
+                    }
                     latch.countDown();
                 }
 
@@ -602,29 +762,95 @@ public class ClickerService extends AccessibilityService {
     }
 
     @TargetApi(30)
-    private Shot toShot(ScreenshotResult r, boolean reuse) {
-        HardwareBuffer hb = r.getHardwareBuffer();
-        try {
-            Bitmap hw = Bitmap.wrapHardwareBuffer(hb, r.getColorSpace());
-            if (hw == null) return null;
-            Bitmap sw = hw.copy(Bitmap.Config.ARGB_8888, false);
-            hw.recycle();
-            if (sw == null) return null;
-            Shot s = new Shot();
-            s.w = sw.getWidth();
-            s.h = sw.getHeight();
-            int n = s.w * s.h;
-            if (reuse && shotBuf != null && shotBuf.length == n) {
-                s.argb = shotBuf;
-            } else {
-                s.argb = new int[n];
-                if (reuse) shotBuf = s.argb;
+    private static Bitmap softCopy(ScreenshotResult r) {
+        Bitmap hw = Bitmap.wrapHardwareBuffer(r.getHardwareBuffer(), r.getColorSpace());
+        if (hw == null) return null;
+        Bitmap sw = hw.copy(Bitmap.Config.ARGB_8888, false);
+        hw.recycle();
+        return sw;
+    }
+
+    /** 通常モード：ユーザー補助のスクリーンショットを約0.34秒ごとに撮り、作業解像度に縮めて渡す */
+    @TargetApi(30)
+    private final class ShotSource implements Frame.Source {
+        private final Frame.Exchange ex = new Frame.Exchange();
+        private volatile boolean run = true;
+        private volatile int fails;
+
+        ShotSource() {
+            new Thread(this::loop, "ac-shot").start();
+        }
+
+        private void loop() {
+            while (run) {
+                long t0 = Frame.nowMs();
+                final CountDownLatch latch = new CountDownLatch(1);
+                try {
+                    takeScreenshot(Display.DEFAULT_DISPLAY, shotExec, new TakeScreenshotCallback() {
+                        @Override
+                        public void onSuccess(ScreenshotResult r) {
+                            HardwareBuffer hb = r.getHardwareBuffer();
+                            try {
+                                publish(r, t0);
+                            } catch (Throwable e) {
+                                fails++;
+                            } finally {
+                                hb.close();
+                                latch.countDown();
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(int errorCode) {
+                            fails++;
+                            latch.countDown();
+                        }
+                    });
+                    latch.await(3, TimeUnit.SECONDS);
+                } catch (Throwable e) {
+                    fails++;
+                }
+                if (fails > 15) break;
+                long left = t0 + SHOT_INTERVAL - Frame.nowMs();
+                if (left > 0) SystemClock.sleep(left);
             }
-            sw.getPixels(s.argb, 0, s.w, 0, 0, s.w, s.h);
+            ex.close();
+        }
+
+        private void publish(ScreenshotResult r, long t0) {
+            Frame fr = ex.free();
+            if (fr == null) return;
+            Bitmap sw = softCopy(r);
+            if (sw == null) { fails++; return; }
+            int W = sw.getWidth(), H = sw.getHeight();
+            int f = Frame.workFactor(W, H);
+            int vw = Math.max(2, Math.round(W / (float) f)), vh = Math.max(2, Math.round(H / (float) f));
+            Bitmap small = Bitmap.createScaledBitmap(sw, vw, vh, true);
+            fr.ensure(vw, vh);
+            small.getPixels(fr.argb, 0, vw, 0, 0, vw, vh);
+            if (small != sw) small.recycle();
             sw.recycle();
-            return s;
-        } finally {
-            hb.close();
+            fr.sx = W / (float) vw;
+            fr.sy = H / (float) vh;
+            fr.f = f;
+            fr.tsMs = t0;
+            fails = 0;
+            ex.publish(fr);
+        }
+
+        @Override
+        public Frame acquire(long afterSeq, long timeoutMs) throws InterruptedException {
+            return ex.acquire(afterSeq, timeoutMs);
+        }
+
+        @Override public void release(Frame f) { ex.release(f); }
+        @Override public boolean alive() { return run && !ex.closed(); }
+        @Override public boolean fast() { return false; }
+
+        @Override
+        public void close() {
+            run = false;
+            ex.close();
         }
     }
 
@@ -634,7 +860,7 @@ public class ClickerService extends AccessibilityService {
 
     private void startCapture(final boolean rangeMode) {
         if (Build.VERSION.SDK_INT < 30) {
-            toast("画像の機能は Android 11 以上で使えます");
+            toast("画像の登録は Android 11 以上で使えます");
             return;
         }
         if (state != IDLE && state != READY) {
@@ -646,8 +872,8 @@ public class ClickerService extends AccessibilityService {
         render();
         panel.setVisibility(View.INVISIBLE);       // パネルが写らないように隠す
         new Thread(() -> {
-            try { Thread.sleep(300); } catch (InterruptedException ignored) { }
-            final Shot shot = takeShotSync(false);
+            SystemClock.sleep(300);
+            final Shot shot = takeShotSync();
             ui.post(() -> {
                 if (shot == null) {
                     closeCrop(prev);
@@ -726,14 +952,17 @@ public class ClickerService extends AccessibilityService {
     }
 
     private boolean registerTemplate(Shot shot, int[] r) {
-        int w = r[2] - r[0], h = r[3] - r[1];
+        // 画面を縮小するときの区切りとそろえる（ずれると少し見つけにくくなる）
+        int f = Frame.workFactor(shot.w, shot.h);
+        int x0 = r[0] - r[0] % f, y0 = r[1] - r[1] % f;
+        int w = r[2] - x0, h = r[3] - y0;
         if (w < 40 || h < 40) {
             toast("小さすぎます。もう少し大きく囲んでください");
             return false;
         }
         int[] crop = new int[w * h];
-        for (int y = 0; y < h; y++) System.arraycopy(shot.argb, (r[1] + y) * shot.w + r[0], crop, y * w, w);
-        ImageMatcher.Template t = ImageMatcher.Template.create(crop, w, h, workFactor(shot.w), true);
+        for (int y = 0; y < h; y++) System.arraycopy(shot.argb, (y0 + y) * shot.w + x0, crop, y * w, w);
+        ImageMatcher.Template t = ImageMatcher.Template.create(crop, w, h, f, true);
         if (!t.usable()) {
             toast("模様が少なすぎて見分けられません。形がわかるように囲んでください");
             return false;
@@ -821,28 +1050,111 @@ public class ClickerService extends AccessibilityService {
     private void onScanBtn() {
         if (state == SCAN) {
             abort = true;
+        } else if (state == WAIT) {
+            cancelWait();
         } else if (state == IDLE || state == READY) {
-            startScan();
+            requestScan();
         } else {
             toast("記録・再生を止めてから押してください");
         }
     }
 
-    private void startScan() {
-        if (Build.VERSION.SDK_INT < 30) {
-            toast("画像の機能は Android 11 以上で使えます");
-            return;
-        }
+    private List<TemplateStore.Tpl> enabledTemplates() {
         final List<TemplateStore.Tpl> list = new ArrayList<>();
         for (TemplateStore.Tpl t : TemplateStore.load(this)) if (t.enabled) list.add(t);
-        if (list.isEmpty()) {
+        return list;
+    }
+
+    /** 探索を始める。高速モードで画面共有がまだなら、先に許可を求める */
+    private void requestScan() {
+        if (enabledTemplates().isEmpty()) {
             toast("先に「📷 登録」で画像を登録してください（アプリの一覧で「使う」がオンか確認）");
+            return;
+        }
+        boolean fast = prefs().getBoolean("fast", true);
+        CaptureService cs = CaptureService.instance;
+        if (fast && cs != null && cs.alive()) {
+            startScan(true);
+        } else if (fast) {
+            state = WAIT;
+            render();
+            try {
+                startActivity(new Intent(this, ProjectionActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+            } catch (Throwable e) {
+                Log.w(TAG, "cannot start ProjectionActivity", e);
+                onDenied();
+            }
+        } else if (Build.VERSION.SDK_INT >= 30) {
+            startScan(false);
+        } else {
+            toast("Android 10 以下では、設定で「高速モード」をオンにしてください");
+        }
+    }
+
+    private void cancelWait() {
+        state = actions.isEmpty() ? IDLE : READY;
+        render();
+    }
+
+    /** 画面共有の準備ができた（CaptureService から） */
+    static void onCaptureReady() {
+        final ClickerService s = instance;
+        if (s == null) return;
+        s.ui.post(() -> {
+            if (s.state == WAIT) s.startScan(true);
+        });
+    }
+
+    /** 画面共有が許可されなかった */
+    static void onCaptureDenied() {
+        final ClickerService s = instance;
+        if (s == null) return;
+        s.ui.post(s::onDenied);
+    }
+
+    private void onDenied() {
+        if (state != WAIT) return;
+        if (Build.VERSION.SDK_INT >= 30) {
+            Toast.makeText(this, "画面共有なし（通常モード）で探します", Toast.LENGTH_SHORT).show();
+            startScan(false);
+        } else {
+            cancelWait();
+            Toast.makeText(this, "画面共有が許可されませんでした", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** 画面共有が終わった（探索中なら通常モードに切り替わる） */
+    static void onCaptureStopped() {
+        Log.i(TAG, "capture stopped");
+    }
+
+    private void stopCapture() {
+        if (CaptureService.instance != null) {
+            try { stopService(new Intent(this, CaptureService.class)); } catch (Throwable ignored) { }
+        }
+    }
+
+    private void startScan(boolean fast) {
+        final List<TemplateStore.Tpl> list = enabledTemplates();
+        if (list.isEmpty()) {
+            cancelWait();
+            return;
+        }
+        Frame.Source src = null;
+        CaptureService cs = CaptureService.instance;
+        if (fast && cs != null && cs.alive()) src = new CaptureService.Src(cs);
+        else if (Build.VERSION.SDK_INT >= 30) src = new ShotSource();
+        if (src == null) {
+            cancelWait();
+            toast("画面を読み取れません");
             return;
         }
         abort = false;
         state = SCAN;
         render();
-        new Thread(() -> scanLoop(list)).start();
+        final Frame.Source s0 = src;
+        new Thread(() -> scanLoop(list, s0), "ac-scan").start();
     }
 
     private static int[] parseRoi(String s) {
@@ -857,80 +1169,158 @@ public class ClickerService extends AccessibilityService {
         }
     }
 
-    @TargetApi(30)
-    private void scanLoop(List<TemplateStore.Tpl> list) {
+    private void scanLoop(List<TemplateStore.Tpl> list, Frame.Source src) {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
         SharedPreferences sp = prefs();
         final float thr = sp.getInt("thr", 80) / 100f;
-        final long cool = sp.getInt("cool", 5) * 100L;           // 0.1秒単位
+        final long cool = sp.getInt("cool", 3) * 100L;           // 0.1秒単位
         final boolean multi = sp.getBoolean("multi", false);
         final boolean colorCk = sp.getBoolean("color", true);
         final boolean tapAll = sp.getBoolean("tapAll", false);
+        final boolean predict = sp.getBoolean("predict", true);
+        final int tapMs = Math.max(10, Math.min(300, sp.getInt("tapMs", 40)));
         final int[] roiScreen = parseRoi(sp.getString("roi", ""));
         final int margin = dp(8);
 
-        int taps = 0, fails = 0;
+        Tracker tracker = new Tracker();
+        ImageMatcher.Pyramid pyr = new ImageMatcher.Pyramid();
+        List<Tracker.Det> dets = new ArrayList<>();
+        long lastSeq = -1, lastUi = 0, lastLog = 0, lastFreshAt = 0;
+        int taps = 0, empty = 0, frames = 0;
+        float fps = 0, procMs = 0, reactMs = 0;
         String err = null;
-        while (!abort) {
-            long t0 = SystemClock.uptimeMillis();
-            ui.post(this::updatePanelRect);
-            Shot shot = takeShotSync(true);
-            if (abort) break;
-            if (shot == null) {
-                if (++fails >= 10) { err = "画面を読み取れません"; break; }
-                if (!sleepAbortable(400)) break;
-                continue;
-            }
-            fails = 0;
-
-            int f = workFactor(shot.w);
-            ImageMatcher.Gray img = ImageMatcher.Gray.fromArgb(shot.argb, shot.w, 0, 0, shot.w, shot.h, f);
-            int[] roi = roiScreen == null ? null
-                    : new int[]{roiScreen[0] / f, roiScreen[1] / f, roiScreen[2] / f, roiScreen[3] / f};
-            int[] pr = panelRect;
-
-            List<float[]> points = new ArrayList<>();
-            String hit = null;
-            for (TemplateStore.Tpl tp : list) {                  // 上にある画像ほど優先
-                ImageMatcher.Template t = tp.template(f);
-                if (t == null) continue;
-                List<ImageMatcher.Match> ms = multi
-                        ? ImageMatcher.findMultiScale(img, t, roi, thr, 20, SCALES)
-                        : ImageMatcher.find(img, t, roi, thr, 20);
-                for (ImageMatcher.Match m : ms) {
-                    float cx = (m.x + m.w / 2f) * f, cy = (m.y + m.h / 2f) * f;
-                    // パネルの上はタップしない
-                    if (cx >= pr[0] - margin && cx <= pr[2] + margin && cy >= pr[1] - margin && cy <= pr[3] + margin) continue;
-                    if (colorCk && m.colorDiff(shot.argb, shot.w, shot.h, f) > COLOR_TOL) continue;
-                    points.add(new float[]{cx, cy});
-                    if (!tapAll) break;
+        try {
+            while (!abort) {
+                if (!src.alive()) {
+                    // 画面共有が止まった → 通常モードで続ける
+                    src.close();
+                    if (Build.VERSION.SDK_INT >= 30 && src.fast()) {
+                        src = new ShotSource();
+                        toast("画面共有が終わったので通常モードで続けます");
+                        lastSeq = -1;
+                        continue;
+                    }
+                    err = "画面を読み取れません";
+                    break;
                 }
-                if (!points.isEmpty()) { hit = tp.name; break; }
-            }
-
-            if (!points.isEmpty()) {
-                for (float[] p : points) {
-                    if (abort) break;
-                    tapSync(p[0], p[1]);
-                    taps++;
+                Frame fr = src.acquire(lastSeq, src.fast() ? 120 : 200);
+                if (abort) {
+                    if (fr != null) src.release(fr);
+                    break;
                 }
-                final String msg = "見つけた：" + hit + "（" + points.size() + "か所）";
-                final int tc = taps;
-                ui.post(() -> setText("🔍 探索中 " + tc + "回", msg));
-                if (!sleepAbortable(cool)) break;
-            } else {
-                final int tc = taps;
-                ui.post(() -> setText("🔍 探索中 " + tc + "回", "探しています…"));
+                if (fr == null) {
+                    if (++empty > 50) { err = "画面を読み取れません"; break; }
+                    continue;
+                }
+                empty = 0;
+                boolean fresh = fr.seq != lastSeq;
+                lastSeq = fr.seq;
+                long t0 = Frame.nowMs();
+                float sw = fr.w * fr.sx, sh = fr.h * fr.sy;
+                try {
+                    if (fresh) {
+                        pyr.build(fr.argb, fr.w, fr.h);
+                        int[] roi = roiScreen == null ? null : new int[]{
+                                (int) (roiScreen[0] / fr.sx), (int) (roiScreen[1] / fr.sy),
+                                (int) Math.ceil(roiScreen[2] / fr.sx), (int) Math.ceil(roiScreen[3] / fr.sy)};
+                        int[] pr = panelRect;
+                        dets = new ArrayList<>();
+                        for (int ti = 0; ti < list.size(); ti++) {
+                            ImageMatcher.Template t = list.get(ti).template(fr.f);
+                            if (t == null) continue;
+                            List<ImageMatcher.Match> ms = multi
+                                    ? ImageMatcher.findMultiScale(pyr, t, roi, thr, 20, SCALES)
+                                    : ImageMatcher.find(pyr, t, roi, thr, 20);
+                            for (ImageMatcher.Match m : ms) {
+                                float cx = (m.x + m.w / 2f) * fr.sx, cy = (m.y + m.h / 2f) * fr.sy;
+                                // パネルの上はタップしない
+                                if (cx >= pr[0] - margin && cx <= pr[2] + margin && cy >= pr[1] - margin && cy <= pr[3] + margin) continue;
+                                if (colorCk && m.colorDiff(fr.argb, fr.w, fr.h) > COLOR_TOL) continue;
+                                dets.add(new Tracker.Det(ti, cx, cy, m.w * fr.sx, m.h * fr.sy, m.score));
+                            }
+                        }
+                    }
+                    tracker.update(dets, fr.tsMs);
+                } finally {
+                    src.release(fr);
+                }
+                long now = Frame.nowMs();
+                if (fresh) {
+                    frames++;
+                    procMs = procMs == 0 ? now - t0 : procMs * 0.85f + (now - t0) * 0.15f;
+                    if (lastFreshAt > 0) {
+                        float inst = 1000f / Math.max(1, now - lastFreshAt);
+                        fps = fps == 0 ? inst : fps * 0.85f + inst * 0.15f;
+                    }
+                    lastFreshAt = now;
+                }
+
+                // タップ（前のタップが終わっていれば）
+                if (gestureFree()) {
+                    List<Tracker.Track> cand = tracker.tappable(now, cool);
+                    if (!cand.isEmpty()) {
+                        int[] pr = panelRect;
+                        GestureDescription.Builder b = new GestureDescription.Builder();
+                        List<Tracker.Track> used = new ArrayList<>();
+                        long len = 0;
+                        int limit = tapAll ? 10 : 1;
+                        for (Tracker.Track k : cand) {
+                            if (used.size() >= limit) break;
+                            long start = (long) used.size() * (tapMs + TAP_GAP);
+                            float horizon = (now - k.last) + start + EXTRA_LATENCY;
+                            float[] p = Tracker.predict(k, horizon, predict);
+                            float px = Math.max(1, Math.min(sw - 2, p[0])), py = Math.max(1, Math.min(sh - 2, p[1]));
+                            if (px >= pr[0] && px <= pr[2] && py >= pr[1] && py <= pr[3]) continue;
+                            Path path = new Path();
+                            path.moveTo(px, py);
+                            b.addStroke(new GestureDescription.StrokeDescription(path, start, tapMs));
+                            used.add(k);
+                            len = start + tapMs;
+                        }
+                        if (!used.isEmpty() && send(b.build(), len, null)) {
+                            for (Tracker.Track k : used) k.lastTap = now;
+                            taps += used.size();
+                            float r = now - used.get(0).last;
+                            reactMs = reactMs == 0 ? r : reactMs * 0.8f + r * 0.2f;
+                        }
+                    }
+                }
+
+                if (now - lastUi > 300) {
+                    lastUi = now;
+                    ui.post(this::updatePanelRect);
+                    final String title = "🔍 探索中 " + taps + "回";
+                    final String sub = String.format(Locale.US, "%s %.0f回/秒・反応%.0fms",
+                            src.fast() ? "⚡高速" : "通常", fps, reactMs + fr2frame(fps));
+                    stats = String.format(Locale.US, "mode=%s fps=%.1f proc=%.1fms react=%.0fms taps=%d frames=%d tracks=%d",
+                            src.fast() ? "fast" : "slow", fps, procMs, reactMs, taps, frames, tracker.tracks().size());
+                    ui.post(() -> { if (state == SCAN) setText(title, sub); });
+                }
+                if (now - lastLog > 2000) {
+                    lastLog = now;
+                    Log.i(TAG, "scan " + stats);
+                }
             }
-            long el = SystemClock.uptimeMillis() - t0;
-            if (el < SHOT_INTERVAL && !sleepAbortable(SHOT_INTERVAL - el)) break;
+        } catch (InterruptedException ignored) {
+        } catch (Throwable e) {
+            Log.e(TAG, "scan error", e);
+            err = "エラーで止まりました";
+        } finally {
+            src.close();
         }
         final int tc = taps;
         final String e = err;
+        Log.i(TAG, "scan end " + stats);
         ui.post(() -> {
             state = actions.isEmpty() ? IDLE : READY;
             render();
             setText(e != null ? e : "探索を止めました", "タップ " + tc + "回");
         });
+    }
+
+    /** 画面に出てから見つけるまでの平均の待ち（フレーム間隔の半分） */
+    private static float fr2frame(float fps) {
+        return fps > 0.1f ? 500f / fps : 0f;
     }
 
     // =====================================================================
@@ -979,5 +1369,64 @@ public class ClickerService extends AccessibilityService {
         } catch (Exception ignored) {
             actions.clear();
         }
+    }
+
+    // =====================================================================
+    // 動作確認用（adb shell dumpsys activity service ... から呼べる。DUMP 権限が必要なので普通のアプリからは呼べない）
+    // =====================================================================
+
+    @Override
+    protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        String cmd = (args != null && args.length > 0) ? args[0] : "";
+        final String a1 = (args != null && args.length > 1) ? args[1] : "";
+        final String a2 = (args != null && args.length > 2) ? args[2] : "";
+        switch (cmd) {
+            case "scan":
+                ui.post(() -> {
+                    if (a1.equals("fast")) prefs().edit().putBoolean("fast", true).commit();
+                    if (a1.equals("slow")) prefs().edit().putBoolean("fast", false).commit();
+                    if (state == IDLE || state == READY) requestScan();
+                });
+                break;
+            case "stop":
+                ui.post(() -> {
+                    if (state == WAIT) cancelWait();
+                    else if (state == SCAN || state == PLAY) stopRunning();
+                });
+                break;
+            case "rec":
+                ui.post(() -> { if (state == IDLE || state == READY) startRec(); });
+                break;
+            case "stoprec":
+                ui.post(() -> { if (state == REC) stopRec(); });
+                break;
+            case "play":
+                ui.post(() -> { if (state == READY) startPlay(); });
+                break;
+            case "panel":
+                ui.post(this::showPanel);
+                break;
+            case "endcapture":
+                ui.post(this::stopCapture);
+                break;
+            case "set":
+                if (!a1.isEmpty()) {
+                    SharedPreferences.Editor e = prefs().edit();
+                    if (a2.equals("true") || a2.equals("false")) e.putBoolean(a1, Boolean.parseBoolean(a2));
+                    else {
+                        try { e.putInt(a1, Integer.parseInt(a2)); } catch (NumberFormatException ex) { e.putString(a1, a2); }
+                    }
+                    e.commit();
+                    ui.post(this::render);
+                }
+                break;
+            default:
+                break;
+        }
+        int[] pr = panelRect;
+        pw.println("state=" + state + " actions=" + actions.size() + " capture=" + (CaptureService.instance != null)
+                + " panel=" + pr[0] + "," + pr[1] + "," + pr[2] + "," + pr[3]);
+        pw.println("stats " + stats);
+        pw.flush();
     }
 }

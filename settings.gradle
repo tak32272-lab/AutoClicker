@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "AutoClicker"
 include ':app'
+include ':testgame'

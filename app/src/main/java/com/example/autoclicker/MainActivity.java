@@ -34,7 +34,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
 
     private SharedPreferences sp;
-    private TextView stateTv, speedTv, thrTv, coolTv, roiTv, transTv;
+    private TextView stateTv, speedTv, thrTv, coolTv, roiTv, transTv, tapTv;
     private LinearLayout listBox;
     private List<TemplateStore.Tpl> tpls;
 
@@ -179,8 +179,21 @@ public class MainActivity extends Activity {
         root.addView(tv("1. ゲームを開き、パネルの「📷 登録」で、モンスターなどを指でなぞって囲みます（周りに少し余白をつけるのがコツ）\n"
                 + "2. 「🔍 探す」を押すと、登録した画像が画面に出たとき自動でタップします（もう一度押すと停止）\n"
                 + "3. 「🔲 範囲」で、探す場所をしぼれます（例：キャラクターの周りだけ）\n"
-                + "・切り取った画像のふちの色は「背景」として無視するので、背景が変わっても見つかります\n"
-                + "・画面の確認は約0.4秒に1回です（Android の制限）", 14));
+                + "・切り取った画像のふちの色は「背景」として無視するので、背景が変わっても見つかります", 14));
+
+        root.addView(header("反応の速さ"));
+        root.addView(check("⚡ 高速モード（画面共有を使って、1秒に数十回確認）", "fast", true));
+        root.addView(tv("「🔍 探す」を押したとき、最初の1回だけ「画面全体を共有」の確認が出ます。「今すぐ開始」を押してください。"
+                + "共有中は通知とステータスバーに表示が出ます（パネルの✕か通知の「終了」で終わります）。"
+                + "オフのときは約0.34秒に1回の確認です（Android の制限）。", 13));
+        root.addView(check("🎯 動く敵は移動先を予測してタップする", "predict", true));
+
+        tapTv = tv("", 15);
+        root.addView(tapTv);
+        root.addView(seek(29, (sp.getInt("tapMs", 40) - 10) / 5, p -> {   // 10〜155ms（5ms刻み）
+            sp.edit().putInt("tapMs", 10 + p * 5).apply();
+            showLabels();
+        }));
 
         thrTv = tv("", 15);
         root.addView(thrTv);
@@ -191,7 +204,7 @@ public class MainActivity extends Activity {
 
         coolTv = tv("", 15);
         root.addView(coolTv);
-        root.addView(seek(50, sp.getInt("cool", 5), p -> {             // 0〜5.0秒
+        root.addView(seek(50, sp.getInt("cool", 3), p -> {             // 0〜5.0秒
             sp.edit().putInt("cool", p).apply();
             showLabels();
         }));
@@ -234,7 +247,10 @@ public class MainActivity extends Activity {
         int s = sp.getInt("speed", 10);
         speedTv.setText("速度 " + s + "（×" + String.format(Locale.US, "%.1f", s / 10f) + "）");
         thrTv.setText("一致度 " + sp.getInt("thr", 80) + "%（高いほど厳しく、低いほど見つけやすい）");
-        coolTv.setText("タップした後の待ち時間 " + String.format(Locale.US, "%.1f", sp.getInt("cool", 5) / 10f) + "秒");
+        int cool = sp.getInt("cool", 3);
+        coolTv.setText("同じ敵をもう一度タップするまでの間隔 " + String.format(Locale.US, "%.1f", cool / 10f) + "秒"
+                + (cool == 0 ? "（連打）" : "") + "\n（ほかの敵は待たずにすぐタップします）");
+        tapTv.setText("タップの長さ " + sp.getInt("tapMs", 40) + "ミリ秒（ゲームが反応しないときは長く）");
         roiTv.setText(sp.getString("roi", "").isEmpty()
                 ? "探す範囲：全画面（パネルの「🔲 範囲」で変更）"
                 : "探す範囲：指定あり（パネルの「🔲 範囲」で変更）");

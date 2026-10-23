@@ -1,0 +1,22 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 動作確認（自動テスト）専用のゲーム。配布する APK には入らない
+android {
+    namespace 'com.example.testgame'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.testgame"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

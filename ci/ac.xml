@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="tpls">[{&quot;id&quot;:&quot;t1&quot;,&quot;name&quot;:&quot;monster&quot;,&quot;on&quot;:true}]</string>
+    <boolean name="fast" value="true" />
+    <boolean name="tapAll" value="true" />
+    <boolean name="predict" value="true" />
+    <int name="cool" value="3" />
+    <int name="count" value="1" />
+    <int name="speed" value="10" />
+</map>
