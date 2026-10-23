@@ -44,7 +44,10 @@ adb shell svc power stayon true
 adb shell input keyevent 82
 adb shell wm dismiss-keyguard
 adb shell settings put system font_scale 1.0
+adb shell settings put secure immersive_mode_confirmations confirmed
 sleep 2
+adb shell wm size | tee -a $OUT/steps.txt
+adb shell wm density | tee -a $OUT/steps.txt
 
 log "install test game"
 adb install -r -g $TGA 2>&1 | tail -1 | tee -a $OUT/steps.txt
@@ -71,13 +74,20 @@ prepare_app() {
   adb shell settings put secure accessibility_enabled 0
   sleep 1
   adb uninstall $PKG >/dev/null 2>&1
-  adb install -r -g $apk 2>&1 | tail -1 | tee -a $OUT/steps.txt
+  r=$(adb install -r -g -i com.android.vending $apk 2>&1 | tail -1)
+  echo "install(-i vending): $r" | tee -a $OUT/steps.txt
+  case "$r" in *Success*) ;; *) adb install -r -g $apk 2>&1 | tail -1 | tee -a $OUT/steps.txt ;; esac
+  adb shell appops set $PKG ACCESS_RESTRICTED_SETTINGS allow 2>&1 | tee -a $OUT/steps.txt
   adb shell am force-stop $PKG
   adb shell "run-as $PKG sh -c 'mkdir -p files/templates shared_prefs && cp /data/local/tmp/t1.png files/templates/t1.png && cp /data/local/tmp/ac.xml shared_prefs/ac.xml && ls files/templates shared_prefs'" 2>&1 | tee -a $OUT/steps.txt
   adb shell appops set $PKG PROJECT_MEDIA allow
   adb shell settings put secure enabled_accessibility_services $PKG/$PKG.ClickerService
   adb shell settings put secure accessibility_enabled 1
   sleep 5
+  adb shell settings get secure enabled_accessibility_services | tee -a $OUT/steps.txt
+  adb shell dumpsys accessibility > $OUT/dumpsys_accessibility_$(basename $apk).txt 2>&1
+  adb shell dumpsys package $PKG | grep -i -E "stopped|installer|restrict" | tee -a $OUT/steps.txt
+  adb shell appops get $PKG | tee -a $OUT/steps.txt
 }
 
 # ---------- 比較用：前のバージョン ----------
@@ -197,6 +207,7 @@ mark "rec2end"
 log "collect logs"
 adb logcat -d -v threadtime -s AC:V TG:V AndroidRuntime:E System.err:W > $OUT/logcat_ac_tg.txt
 adb logcat -d -v threadtime "*:W" | tail -3000 > $OUT/logcat_warn.txt
+adb logcat -d -v threadtime | grep -i -E "accessib|autoclicker|MediaProjection|ClickerService|CaptureService" | tail -800 > $OUT/logcat_a11y.txt
 python3 ci/parse.py $OUT/logcat_ac_tg.txt | tee $OUT/summary.txt
 log "done"
 exit 0

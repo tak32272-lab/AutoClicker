@@ -128,6 +128,7 @@ public class ClickerService extends AccessibilityService {
         load();
         state = actions.isEmpty() ? IDLE : READY;
         showPanel();
+        Log.i(TAG, "service connected");
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent e) { }
